@@ -1,52 +1,76 @@
 # 🎂 Birthday Email Automator
 
-AI-written birthday emails + heads-up reminders + gift search + Google Calendar import.
+Compose & send birthday emails · Gift search (Etsy & Amazon) · Google Calendar import · Heads-up reminders
+
+---
 
 ## Features
 
-- **Friends list** — Add people with name, email, birthday, relationship, and personal notes
-- **Relationship categories** — Mom, Dad, Spouse, Best friend, Colleague, and more — with colour-coded avatars
-- **Google Calendar import** — Scans all your calendars for birthday events and imports them in one click
-- **Gift search** — Search Etsy & Amazon for gifts per person, with smart defaults based on their notes
-- **AI gift ideas** — Ask Claude for personalised gift suggestions right from the app
-- **Birthday emails** — Claude writes personalised emails; EmailJS delivers them from your browser
-- **Heads-up reminders** — Get an email to yourself X days before each birthday
-- **Filter by relationship** — View just family, friends, colleagues, etc.
+- **Friends list** — name, email, birthday, relationship, notes — with colour-coded avatars
+- **Relationship categories** — Mom, Dad, Spouse, Best friend, Colleague, and more
+- **Compose & send** — write your own email, pick recipients from your friends list or type any address, send via EmailJS
+- **Starter templates** — Quick & cheerful, Warm & heartfelt, Funny & casual
+- **Gift search** — Etsy & Amazon search per friend, with smart defaults from their notes
+- **Google Calendar import** — scans all calendars for birthday events (works inside Claude.ai)
+- **Heads-up reminders** — sends you an email X days before upcoming birthdays
+- **Filter by relationship** — view just family, friends, colleagues, etc.
+
+---
 
 ## Deploy to GitHub Pages
 
-1. Fork or push this repo to GitHub (make sure it's public, or enable Pages on private repos with a paid plan)
-2. Go to **Settings → Pages** → set Source to **GitHub Actions**
-3. Push to `main` — your site goes live at `https://<username>.github.io/<repo-name>`
+### 1. Add repository secrets
 
-## How to use
+Go to your repo → **Settings → Secrets and variables → Actions → New repository secret**:
 
-1. Open the app and go to **Add friend** or **Import from calendar**
-2. Set your own email in **Notifications** for heads-up reminders
-3. Each day, open the app and click **Copy birthday prompt** in the Send tab
-4. Paste the prompt into [Claude](https://claude.ai), copy the reply
-5. Paste Claude's reply back into the app and hit **Send** — EmailJS delivers it
+| Secret name             | Value                     |
+|-------------------------|---------------------------|
+| `EMAILJS_PUBLIC_KEY`    | Your EmailJS public key   |
+| `EMAILJS_SERVICE_ID`    | e.g. `service_xxxxxxx`    |
+| `EMAILJS_TEMPLATE_ID`   | e.g. `template_xxxxxxx`   |
 
-## EmailJS setup
+### 2. Enable GitHub Pages
 
-The app is pre-configured. To use your own EmailJS account, update these three values in `index.html`:
+**Settings → Pages → Source → GitHub Actions**
 
-```js
-const EJSPUB = 'your_public_key';
-const EJSSVC = 'your_service_id';
-const EJSTPL = 'your_template_id';
+### 3. Push to main
+
+The workflow substitutes the secret placeholders and deploys automatically.
+Live at: `https://<username>.github.io/<repo-name>`
+
+---
+
+## Deploy to AWS (S3 + CloudFront)
+
+```bash
+cp .env.example .env   # fill in your values
+chmod +x deploy-aws.sh
+./deploy-aws.sh
 ```
 
-Your EmailJS template must include these variables: `to_name`, `to_email`, `subject`, `message`.
+---
 
-## Google Calendar import
+## EmailJS template variables
 
-The calendar scan uses the Claude API with the Google Calendar MCP connector.
-This only works when running inside [Claude.ai](https://claude.ai) with the Google Calendar connector enabled.
-On a standalone deployment the scan button will show a connection error — this is expected.
+Your template must include: `{{to_name}}`, `{{to_email}}`, `{{subject}}`, `{{message}}`
+
+---
+
+## Local preview
+
+```bash
+source .env
+sed "s|%%EMAILJS_PUBLIC_KEY%%|$EMAILJS_PUBLIC_KEY|g; \
+     s|%%EMAILJS_SERVICE_ID%%|$EMAILJS_SERVICE_ID|g; \
+     s|%%EMAILJS_TEMPLATE_ID%%|$EMAILJS_TEMPLATE_ID|g" \
+  index.html > index.local.html
+open index.local.html
+```
+
+---
 
 ## Notes
 
-- All friend data is stored in your browser's `localStorage` — nothing is sent to any server
-- The EmailJS public key is safe to expose in client-side code
-- Imported friends from Google Calendar are marked with a 📅 badge
+- All data stored in browser `localStorage` — nothing sent to any server
+- Google Calendar import only works inside Claude.ai with the connector enabled
+- EmailJS public key is safe to expose client-side (restrict by domain in EmailJS dashboard)
