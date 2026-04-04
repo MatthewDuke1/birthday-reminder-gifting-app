@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Birthday Email Automator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500&family=DM+Serif+Display&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:#faf9f7; --bg2:#f2f0ec; --bg3:#e8e5df;
+      --surface:#ffffff; --text:#1a1916; --text2:#6b6860; --text3:#9c9a95;
+      --border:rgba(30,27,20,0.10); --border2:rgba(30,27,20,0.18);
+      --accent:#c8562a; --accent-bg:#fdf0eb;
+      --success-bg:#e8f4e1; --success:#2d6a1f;
+      --warn-bg:#fef3e0;   --warn:#8c6010;
+      --info-bg:#e5eef9;   --info:#1a4f8a;
+      --danger-bg:#fce9e9; --danger:#9b2020;
+      --radius:8px; --radius-lg:14px;
+      --shadow:0 1px 3px rgba(0,0,0,0.06),0 1px 2px rgba(0,0,0,0.04);
+    }
+    @media (prefers-color-scheme:dark){
+      :root {
+        --bg:#18170f; --bg2:#211f15; --bg3:#2a271a;
+        --surface:#272519; --text:#f0ece3; --text2:#a09c90; --text3:#6b6860;
+        --border:rgba(255,250,235,0.10); --border2:rgba(255,250,235,0.18);
+        --accent:#e07550; --accent-bg:#2a1a10;
+        --success-bg:#142a0e; --success:#7dc46b;
+        --warn-bg:#251a08;   --warn:#d4a030;
+        --info-bg:#0d1f35;   --info:#6ea8e8;
+        --danger-bg:#2a0f0f; --danger:#e07070;
+        --shadow:0 1px 4px rgba(0,0,0,0.3);
+      }
+    }
+    html { font-size:15px; }
+    body { font-family:'DM Sans',system-ui,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; line-height:1.6; }
+
+    .header { border-bottom:1px solid var(--border); background:var(--surface); padding:1rem 1.5rem; display:flex; align-items:center; gap:12px; }
+    .header-icon { width:36px; height:36px; background:var(--accent-bg); border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:18px; }
+    .header h1 { font-family:'DM Serif Display',Georgia,serif; font-size:20px; font-weight:400; letter-spacing:-0.3px; }
+    .header-sub { font-size:12px; color:var(--text3); margin-top:1px; }
+
+    .page { max-width:740px; margin:0 auto; padding:1.5rem 1rem 4rem; }
+
+    .tabs { display:flex; gap:2px; margin-bottom:1.25rem; background:var(--bg2); border-radius:var(--radius); padding:3px; overflow-x:auto; }
+    .tab { padding:6px 14px; border-radius:6px; font-size:13px; font-weight:500; cursor:pointer; border:none; background:transparent; color:var(--text2); white-space:nowrap; transition:background 0.15s,color 0.15s; }
+    .tab:hover { color:var(--text); }
+    .tab.active { background:var(--surface); color:var(--text); box-shadow:var(--shadow); }
+
+    .panel { display:none; }
+    .panel.active { display:block; }
+
+    .stitle { font-size:11px; font-weight:500; color:var(--text3); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:10px; }
+
+    .card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg); padding:1rem 1.125rem; margin-bottom:12px; box-shadow:var(--shadow); }
+
+    .friend-row { display:flex; align-items:flex-start; gap:12px; padding:11px 0; border-bottom:1px solid var(--border); }
+    .friend-row:last-child { border-bottom:none; padding-bottom:0; }
+    .avatar { width:38px; height:38px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:500; flex-shrink:0; margin-top:1px; }
+    .friend-info { flex:1; min-width:0; }
+    .friend-name { font-size:14px; font-weight:500; color:var(--text); }
+    .friend-meta { font-size:12px; color:var(--text2); margin-top:2px; }
+
+    .pill { display:inline-flex; align-items:center; font-size:11px; padding:2px 8px; border-radius:99px; font-weight:500; }
+    .pill-today { background:var(--success-bg); color:var(--success); }
+    .pill-week  { background:var(--warn-bg);    color:var(--warn); }
+    .pill-soon  { background:var(--info-bg);    color:var(--info); }
+
+    .gift-row { display:flex; gap:5px; margin-top:8px; flex-wrap:wrap; align-items:center; }
+    .gift-input { flex:1; min-width:140px; font-size:12px; padding:5px 9px; }
+    .gbtn { font-size:12px; padding:5px 10px; border-radius:var(--radius); cursor:pointer; border:1px solid var(--border2); background:transparent; color:var(--text2); white-space:nowrap; display:inline-flex; align-items:center; gap:4px; transition:background 0.12s; }
+    .gbtn:hover { background:var(--bg2); }
+    .gbtn.etsy { border-color:#c4501f; color:#c4501f; }
+    .gbtn.amzn { border-color:#a06800; color:#a06800; }
+    .gbtn.email-btn { color:var(--text); border-color:var(--border2); }
+    .shop-dot { width:14px; height:14px; border-radius:3px; display:inline-flex; align-items:center; justify-content:center; font-size:9px; font-weight:600; flex-shrink:0; }
+    .shop-dot.e { background:#c4501f; color:#fff; }
+    .shop-dot.a { background:#a06800; color:#fff; }
+
+    .ideas-panel { margin-top:8px; background:var(--bg2); border-radius:var(--radius); padding:10px 12px; font-size:12px; color:var(--text2); display:none; line-height:1.65; }
+    .ideas-panel.open { display:block; }
+
+    .form-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .form-grid .span2 { grid-column:1/-1; }
+    .flabel { font-size:12px; color:var(--text2); margin-bottom:4px; display:block; font-weight:500; }
+    input, textarea, select { width:100%; padding:8px 10px; font-size:13px; font-family:inherit; background:var(--bg); color:var(--text); border:1px solid var(--border2); border-radius:var(--radius); outline:none; transition:border-color 0.15s; }
+    input:focus, textarea:focus, select:focus { border-color:var(--accent); }
+    .custom-rel { display:none; }
+    .custom-rel.show { display:block; }
+
+    .btn { padding:8px 18px; font-size:13px; font-weight:500; border-radius:var(--radius); cursor:pointer; border:none; font-family:inherit; transition:opacity 0.15s,background 0.15s; }
+    .btn-primary { background:var(--accent); color:#fff; }
+    .btn-primary:hover { opacity:0.88; }
+    .btn-outline { background:transparent; color:var(--text); border:1px solid var(--border2); }
+    .btn-outline:hover { background:var(--bg2); }
+    .btn-ghost { background:transparent; color:var(--danger); border:none; font-size:12px; padding:4px 6px; cursor:pointer; }
+
+    .filter-bar { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
+    .chip { font-size:12px; padding:4px 12px; border-radius:99px; border:1px solid var(--border2); background:transparent; color:var(--text2); cursor:pointer; transition:background 0.12s,color 0.12s; }
+    .chip:hover { background:var(--bg2); }
+    .chip.active { background:var(--text); color:var(--bg); border-color:transparent; }
+
+    .status { border-radius:var(--radius); padding:10px 14px; font-size:13px; margin-bottom:12px; display:none; }
+    .status.ok  { background:var(--success-bg); color:var(--success); display:block; }
+    .status.err { background:var(--danger-bg);  color:var(--danger);  display:block; }
+
+    .notif-box { background:var(--bg2); border-radius:var(--radius); padding:14px; margin-bottom:14px; }
+    .nrow { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+    .nrow:last-child { margin-bottom:0; }
+    .nlabel { font-size:13px; color:var(--text2); width:130px; flex-shrink:0; }
+
+    hr.div { border:none; border-top:1px solid var(--border); margin:14px 0; }
+
+    .upcoming-row { display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--border); }
+    .upcoming-row:last-child { border-bottom:none; }
+
+    .compose-wrap { display:flex; flex-direction:column; gap:0; }
+    .compose-row { display:flex; gap:10px; align-items:flex-start; padding:10px 0; border-bottom:1px solid var(--border); }
+    .compose-row:last-of-type { border-bottom:none; }
+    .compose-label { font-size:12px; font-weight:500; color:var(--text2); width:60px; flex-shrink:0; padding-top:9px; }
+    .compose-field { flex:1; min-width:0; }
+    .recipient-chips { display:flex; flex-wrap:wrap; gap:5px; margin-bottom:6px; }
+    .rchip { display:inline-flex; align-items:center; gap:5px; font-size:12px; padding:3px 10px; border-radius:99px; background:var(--bg2); border:1px solid var(--border2); color:var(--text); }
+    .rchip button { background:none; border:none; cursor:pointer; color:var(--text2); font-size:14px; line-height:1; padding:0; }
+    .rchip button:hover { color:var(--danger); }
+    .recipient-select { display:flex; gap:6px; }
+    .recipient-select select { flex:1; font-size:13px; }
+    .send-bar { display:flex; justify-content:space-between; align-items:center; margin-top:6px; }
+    .char-count { font-size:11px; color:var(--text3); }
+    .send-status { font-size:13px; margin-top:10px; padding:10px 14px; border-radius:var(--radius); display:none; }
+    .send-status.ok  { background:var(--success-bg); color:var(--success); display:block; }
+    .send-status.err { background:var(--danger-bg);  color:var(--danger);  display:block; }
+    .template-bar { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; }
+    .tpl-btn { font-size:11px; padding:3px 10px; border-radius:99px; border:1px solid var(--border2); background:transparent; color:var(--text2); cursor:pointer; }
+    .tpl-btn:hover { background:var(--bg2); }
+
+    .cal-header { display:flex; align-items:center; gap:12px; margin-bottom:10px; }
+    .cal-icon { width:40px; height:40px; background:var(--info-bg); border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:20px; }
+    .import-item { display:flex; align-items:center; justify-content:space-between; padding:9px 0; border-bottom:1px solid var(--border); }
+    .import-item:last-child { border-bottom:none; }
+    .already-tag { font-size:11px; color:var(--text3); padding:3px 9px; border-radius:99px; border:1px solid var(--border2); }
+
+    .actions { display:flex; gap:8px; flex-wrap:wrap; }
+    .empty { text-align:center; padding:2rem; color:var(--text3); font-size:14px; }
+    .spinner { display:inline-block; width:12px; height:12px; border:1.5px solid currentColor; border-top-color:transparent; border-radius:50%; animation:spin 0.6s linear infinite; vertical-align:middle; margin-right:6px; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+<header class="header">
+  <div class="header-icon">🎂</div>
+  <div>
+    <h1>Birthday Automator</h1>
+    <div class="header-sub">Compose & send · Gift search · Calendar sync · Heads-up reminders</div>
+  </div>
+</header>
+
+<div class="page">
+  <div id="status" class="status"></div>
+
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('friends')">Friends</button>
+    <button class="tab" onclick="switchTab('add')">Add friend</button>
+    <button class="tab" onclick="switchTab('compose')">Compose & send</button>
+    <button class="tab" onclick="switchTab('import')">Calendar import</button>
+    <button class="tab" onclick="switchTab('notifications')">Notifications</button>
+  </div>
+
+  <!-- FRIENDS -->
+  <div id="panel-friends" class="panel active">
+    <p class="stitle">Your people</p>
+    <div class="filter-bar" id="filter-bar"></div>
+    <div class="card" id="friends-list"><div class="empty">No one added yet. Add a friend or import from calendar.</div></div>
+  </div>
+
+  <!-- ADD -->
+  <div id="panel-add" class="panel">
+    <p class="stitle">Add someone</p>
+    <div class="card">
+      <div class="form-grid">
+        <div>
+          <label class="flabel">Name</label>
+          <input type="text" id="inp-name" placeholder="Full name" />
+        </div>
+        <div>
+          <label class="flabel">Email address</label>
+          <input type="email" id="inp-email" placeholder="their@email.com" />
+        </div>
+        <div>
+          <label class="flabel">Birthday</label>
+          <input type="date" id="inp-birthday" />
+        </div>
+        <div>
+          <label class="flabel">Relationship</label>
+          <select id="inp-relation" onchange="handleRelChange()">
+            <option value="">— Select —</option>
+            <optgroup label="Family">
+              <option>Mom</option><option>Dad</option><option>Sister</option><option>Brother</option>
+              <option>Grandmother</option><option>Grandfather</option><option>Aunt</option><option>Uncle</option><option>Cousin</option>
+            </optgroup>
+            <optgroup label="Partner">
+              <option>Spouse</option><option>Girlfriend</option><option>Boyfriend</option>
+              <option>Partner</option><option>Fiancée</option><option>Fiancé</option>
+            </optgroup>
+            <optgroup label="Social">
+              <option>Best friend</option><option>Friend</option><option>Colleague</option>
+              <option>Roommate</option><option>Neighbour</option>
+            </optgroup>
+            <option value="__custom__">Other (type below)</option>
+          </select>
+        </div>
+        <div class="span2 custom-rel" id="custom-rel-wrap">
+          <label class="flabel">Custom relationship</label>
+          <input type="text" id="inp-custom-rel" placeholder="e.g. Mentor, Pen pal…" />
+        </div>
+        <div class="span2">
+          <label class="flabel">Personal notes <span style="font-weight:400;color:var(--text3)">(optional)</span></label>
+          <textarea id="inp-notes" rows="2" style="resize:vertical" placeholder="Interests, memories, inside jokes…"></textarea>
+        </div>
+      </div>
+      <div style="margin-top:14px;">
+        <button class="btn btn-primary" onclick="addFriend()">Add person</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- COMPOSE & SEND -->
+  <div id="panel-compose" class="panel">
+    <p class="stitle">Compose email</p>
+    <div class="card">
+      <div class="compose-wrap">
+
+        <div class="compose-row">
+          <span class="compose-label">To</span>
+          <div class="compose-field">
+            <div class="recipient-chips" id="recipient-chips"></div>
+            <div class="recipient-select">
+              <select id="recipient-select" onchange="addRecipient()">
+                <option value="">Add from friends…</option>
+              </select>
+              <input type="email" id="recipient-custom" placeholder="or type email…" style="flex:1;font-size:12px;" />
+              <button class="btn btn-outline" style="padding:6px 10px;font-size:12px;white-space:nowrap;" onclick="addCustomRecipient()">Add</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="compose-row">
+          <span class="compose-label">Subject</span>
+          <div class="compose-field">
+            <input type="text" id="compose-subject" placeholder="Happy Birthday! 🎂" />
+          </div>
+        </div>
+
+        <div class="compose-row" style="border-bottom:none;">
+          <span class="compose-label" style="padding-top:6px;">Message</span>
+          <div class="compose-field">
+            <div class="template-bar">
+              <button class="tpl-btn" onclick="useTemplate('happy')">Quick &amp; cheerful</button>
+              <button class="tpl-btn" onclick="useTemplate('warm')">Warm &amp; heartfelt</button>
+              <button class="tpl-btn" onclick="useTemplate('funny')">Funny &amp; casual</button>
+              <button class="tpl-btn" onclick="clearBody()">Clear</button>
+            </div>
+            <textarea id="compose-body" rows="10" style="resize:vertical;font-size:13px;line-height:1.65;" placeholder="Write your message here…" oninput="updateCount()"></textarea>
+            <div class="send-bar">
+              <span class="char-count" id="char-count">0 characters</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <hr class="div">
+      <div class="actions">
+        <button class="btn btn-primary" id="send-btn" onclick="sendEmail()">Send email</button>
+        <button class="btn btn-outline" onclick="clearCompose()">Clear all</button>
+      </div>
+      <div id="send-status" class="send-status"></div>
+    </div>
+  </div>
+
+  <!-- CALENDAR IMPORT -->
+  <div id="panel-import" class="panel">
+    <p class="stitle">Import from Google Calendar</p>
+    <div class="card">
+      <div class="cal-header">
+        <div class="cal-icon">📅</div>
+        <div>
+          <div style="font-size:14px;font-weight:500;color:var(--text);">Google Calendar sync</div>
+          <div style="font-size:12px;color:var(--text2);">Scans all your calendars for birthday events</div>
+        </div>
+      </div>
+      <p style="font-size:13px;color:var(--text2);margin-bottom:14px;line-height:1.55;">
+        Searches for events with "birthday" in the title — including the Google Contacts Birthdays calendar if enabled.
+        Make sure the <strong>Birthdays</strong> calendar is toggled on in Google Calendar for best results.
+      </p>
+      <button class="btn btn-primary" id="scan-btn" onclick="scanCalendar()">Scan for birthdays</button>
+    </div>
+    <div id="import-result"></div>
+  </div>
+
+  <!-- NOTIFICATIONS -->
+  <div id="panel-notifications" class="panel">
+    <p class="stitle">Heads-up reminders</p>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text2);margin-bottom:14px;">Get an email reminder to yourself before upcoming birthdays.</p>
+      <div class="notif-box">
+        <div class="nrow">
+          <span class="nlabel">Your email</span>
+          <input type="email" id="notif-email" placeholder="you@example.com" style="flex:1;" />
+        </div>
+        <div class="nrow">
+          <span class="nlabel">Days in advance</span>
+          <input type="number" id="notif-days" value="7" min="1" max="30" style="width:70px;" />
+          <span style="font-size:13px;color:var(--text2);">days before birthday</span>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary" onclick="saveNotif()">Save settings</button>
+        <button class="btn btn-outline" onclick="sendHeadsUp()">Send heads-up now</button>
+      </div>
+    </div>
+    <p class="stitle">Upcoming birthdays</p>
+    <div class="card" id="upcoming-list"><div class="empty">No one added yet.</div></div>
+  </div>
+</div>
+
+<script>
+// ── EmailJS ─────────────────────────────────────────────────────────────
+const EJSPUB = '%%EMAILJS_PUBLIC_KEY%%';
+const EJSSVC = '%%EMAILJS_SERVICE_ID%%';
+const EJSTPL = '%%EMAILJS_TEMPLATE_ID%%';
+emailjs.init({ publicKey: EJSPUB });
+
+// ── Storage ──────────────────────────────────────────────────────────────
+const FK = 'bday_friends_v5', NK = 'bday_notif_v3';
+const ld  = k => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } };
+const sv  = (k, v) => localStorage.setItem(k, JSON.stringify(v));
+const friends = () => ld(FK) || [];
+const notif   = () => ld(NK) || {};
+
+let activeFilter = 'All';
+let recipients   = [];
+
+// ── Utils ────────────────────────────────────────────────────────────────
+const initials = n => n.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+
+function daysUntil(b) {
+  const t = new Date(); t.setHours(0, 0, 0, 0);
+  const d = new Date(b + 'T00:00:00');
+  const nx = new Date(t.getFullYear(), d.getMonth(), d.getDate());
+  if (nx < t) nx.setFullYear(t.getFullYear() + 1);
+  return Math.round((nx - t) / 86400000);
+}
+const isToday = b => daysUntil(b) === 0;
+const fmtB    = b => new Date(b + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+
+// ── Relationship colours ─────────────────────────────────────────────────
+const RC = {
+  'Mom':        ['#fce8f3','#8c1f5a'], 'Dad':        ['#e5eef9','#1a4f8a'],
+  'Sister':     ['#fce8f3','#7a1a4a'], 'Brother':    ['#e5eef9','#1a5f9a'],
+  'Grandmother':['#fef3e0','#7a5000'], 'Grandfather':['#fef3e0','#8c6010'],
+  'Aunt':       ['#fce8f3','#8c1f5a'], 'Uncle':      ['#e5eef9','#1a4f8a'],
+  'Cousin':     ['#e8f4e1','#2d5a1f'], 'Spouse':     ['#fce9e9','#8c1a1a'],
+  'Girlfriend': ['#fce9e9','#9b2020'], 'Boyfriend':  ['#e5eef9','#1a4f8a'],
+  'Partner':    ['#fce9e9','#8c1a1a'], 'Fiancée':    ['#fce9e9','#9b2020'],
+  'Fiancé':     ['#e5eef9','#1a4f8a'], 'Best friend':['#f0eeff','#4a3aaa'],
+  'Friend':     ['#f0eeff','#5a47b5'], 'Colleague':  ['#e2f5f0','#1a6a50'],
+  'Roommate':   ['#e2f5f0','#1a7060'], 'Neighbour':  ['#f0ede8','#5a4a38'],
+};
+const avStyle   = r => { const c = RC[r] || ['#e5eef9','#1a4f8a']; return `background:${c[0]};color:${c[1]}`; };
+const pillStyle = r => { const c = RC[r]; return c ? `background:${c[0]};color:${c[1]}` : 'background:var(--bg2);color:var(--text2)'; };
+
+// ── Status ───────────────────────────────────────────────────────────────
+function showStatus(msg, type) {
+  const el = document.getElementById('status');
+  el.className = 'status ' + (type === 'error' ? 'err' : 'ok');
+  el.textContent = msg;
+  setTimeout(() => el.style.display = 'none', 4000);
+}
+
+// ── Tab switching ─────────────────────────────────────────────────────────
+function switchTab(tab) {
+  const names = ['friends','add','compose','import','notifications'];
+  document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', names[i] === tab));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('panel-' + tab).classList.add('active');
+  if (tab === 'notifications') renderUpcoming();
+  if (tab === 'friends')       renderFriends();
+  if (tab === 'compose')       populateRecipientSelect();
+}
+
+// ── Form helpers ──────────────────────────────────────────────────────────
+function handleRelChange() {
+  document.getElementById('custom-rel-wrap').classList.toggle('show', document.getElementById('inp-relation').value === '__custom__');
+}
+function getRelation() {
+  const s = document.getElementById('inp-relation').value;
+  return s === '__custom__' ? (document.getElementById('inp-custom-rel').value.trim() || 'Other') : s;
+}
+
+// ── Filter bar ────────────────────────────────────────────────────────────
+function buildFilterBar() {
+  const fs   = friends();
+  const rels = ['All', ...new Set(fs.map(f => f.relation).filter(Boolean))];
+  const bar  = document.getElementById('filter-bar');
+  if (rels.length <= 1) { bar.innerHTML = ''; return; }
+  bar.innerHTML = rels.map(r => `<button class="chip${r === activeFilter ? ' active' : ''}" onclick="setFilter('${r}')">${r}</button>`).join('');
+}
+function setFilter(r) { activeFilter = r; renderFriends(); }
+
+// ── Gift helpers ──────────────────────────────────────────────────────────
+function giftQuery(f) {
+  const base = f.notes ? f.notes.split(',')[0].trim() : (f.relation ? f.relation + ' gift' : f.name);
+  return f.notes ? base + ' gift' : base;
+}
+function openGift(site, idx) {
+  const f = friends()[idx];
+  const inp = document.getElementById('ginp-' + idx);
+  const q = (inp && inp.value.trim()) || giftQuery(f);
+  window.open(site === 'etsy' ? `https://www.etsy.com/search?q=${encodeURIComponent(q)}` : `https://www.amazon.com/s?k=${encodeURIComponent(q)}`, '_blank');
+}
+function askIdeas(idx) {
+  const f = friends()[idx];
+  const panel = document.getElementById('ideas-' + idx);
+  if (panel.classList.contains('open')) { panel.classList.remove('open'); return; }
+  panel.classList.add('open');
+  panel.textContent = 'Loading ideas…';
+  const age = new Date().getFullYear() - new Date(f.birthday + 'T00:00:00').getFullYear();
+  const rel = f.relation ? ` who is your ${f.relation}` : '';
+  alert(`Open Claude and ask:\n\nSuggest 5 creative birthday gift ideas for ${f.name}${rel} who is turning ${age}.${f.notes ? ' Interests: ' + f.notes : ''} Keep each idea to one sentence.`);
+  panel.textContent = 'Tip: Ask Claude for gift ideas in a new tab for best results!';
+}
+
+// ── Render friends ────────────────────────────────────────────────────────
+function renderFriends() {
+  const fs = friends(), el = document.getElementById('friends-list');
+  const rd = parseInt(notif().days || 7);
+  buildFilterBar();
+  const filtered = activeFilter === 'All' ? fs : fs.filter(f => f.relation === activeFilter);
+  if (!fs.length)       { el.innerHTML = '<div class="empty">No one added yet. Add a friend or import from calendar.</div>'; return; }
+  if (!filtered.length) { el.innerHTML = `<div class="empty">No ${activeFilter}s added yet.</div>`; return; }
+
+  el.innerHTML = filtered.map(f => {
+    const ri  = fs.indexOf(f);
+    const d   = daysUntil(f.birthday);
+    const badge   = d === 0 ? '<span class="pill pill-today" style="margin-left:4px;">🎉 Today!</span>'
+                  : d <= rd ? `<span class="pill pill-week" style="margin-left:4px;">In ${d}d ⏰</span>`
+                  : d <= 30 ? `<span class="pill pill-soon" style="margin-left:4px;">In ${d}d</span>` : '';
+    const relPill = f.relation ? `<span class="pill" style="${pillStyle(f.relation)};margin-left:4px;">${f.relation}</span>` : '';
+    const calPill = f.fromCalendar ? `<span class="pill" style="background:var(--info-bg);color:var(--info);margin-left:4px;">📅</span>` : '';
+    const meta    = (f.email ? f.email + ' &bull; ' : '') + fmtB(f.birthday);
+
+    return `<div class="friend-row">
+      <div class="avatar" style="${avStyle(f.relation)}">${initials(f.name)}</div>
+      <div class="friend-info">
+        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:2px;">
+          <span class="friend-name">${f.name}</span>${relPill}${calPill}${badge}
+        </div>
+        <div class="friend-meta">${meta}</div>
+        <div class="gift-row">
+          <input class="gift-input" type="text" id="ginp-${ri}" placeholder="${giftQuery(f)}" />
+          <button class="gbtn etsy" onclick="openGift('etsy',${ri})"><span class="shop-dot e">E</span>Etsy</button>
+          <button class="gbtn amzn" onclick="openGift('amzn',${ri})"><span class="shop-dot a">A</span>Amazon</button>
+          <button class="gbtn ideas" onclick="askIdeas(${ri})">Ideas</button>
+          <button class="gbtn email-btn" onclick="composeFor(${ri})">✉ Email</button>
+          <button class="btn-ghost" onclick="removeFriend(${ri})" style="margin-left:auto;">Remove</button>
+        </div>
+        <div class="ideas-panel" id="ideas-${ri}"></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderUpcoming() {
+  const fs = friends(), el = document.getElementById('upcoming-list');
+  const days = parseInt(notif().days || 7);
+  if (!fs.length) { el.innerHTML = '<div class="empty">No one added yet.</div>'; return; }
+  const sorted = [...fs].map(f => ({ ...f, d: daysUntil(f.birthday) })).sort((a, b) => a.d - b.d);
+  el.innerHTML = sorted.map(f => {
+    const badge   = f.d === 0 ? '<span class="pill pill-today">Today!</span>'
+                  : f.d <= days ? '<span class="pill pill-week">Reminder window</span>' : '';
+    const relPill = f.relation ? `<span class="pill" style="${pillStyle(f.relation)}">${f.relation}</span>` : '';
+    return `<div class="upcoming-row">
+      <div class="avatar" style="width:30px;height:30px;font-size:11px;${avStyle(f.relation)}">${initials(f.name)}</div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:13px;font-weight:500;display:flex;align-items:center;gap:5px;flex-wrap:wrap;">${f.name}${relPill}</div>
+        <div style="font-size:12px;color:var(--text2);">${fmtB(f.birthday)}</div>
+      </div>
+      <span style="font-size:12px;color:var(--text2);white-space:nowrap;margin-right:6px;">${f.d === 0 ? 'Today' : 'In ' + f.d + 'd'}</span>
+      ${badge}
+    </div>`;
+  }).join('');
+}
+
+function removeFriend(i) {
+  const fs = friends(); fs.splice(i, 1); sv(FK, fs);
+  activeFilter = 'All'; renderFriends(); renderUpcoming();
+}
+
+function addFriend(data) {
+  const name     = data ? data.name     : document.getElementById('inp-name').value.trim();
+  const email    = data ? data.email    : document.getElementById('inp-email').value.trim();
+  const birthday = data ? data.birthday : document.getElementById('inp-birthday').value;
+  const relation = data ? data.relation : getRelation();
+  const notes    = data ? data.notes    : document.getElementById('inp-notes').value.trim();
+  const fromCal  = data ? !!data.fromCalendar : false;
+  if (!name || !birthday) { showStatus('Name and birthday are required.', 'error'); return false; }
+  const fs = friends();
+  if (fs.find(f => f.name.toLowerCase() === name.toLowerCase())) { showStatus(name + ' is already in your list.', 'error'); return false; }
+  fs.push({ name, email, birthday, relation, notes, fromCalendar: fromCal });
+  sv(FK, fs);
+  if (!data) {
+    ['inp-name','inp-email','inp-birthday','inp-notes','inp-custom-rel'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('inp-relation').value = '';
+    document.getElementById('custom-rel-wrap').classList.remove('show');
+    showStatus(name + ' added!', 'success');
+    activeFilter = 'All'; switchTab('friends');
+  }
+  renderFriends(); return true;
+}
+
+function saveNotif() {
+  const email = document.getElementById('notif-email').value.trim();
+  const days  = document.getElementById('notif-days').value;
+  if (!email) { showStatus('Please enter your email.', 'error'); return; }
+  sv(NK, { email, days }); showStatus('Settings saved!', 'success');
+  renderFriends(); renderUpcoming();
+}
+
+// ── Compose ───────────────────────────────────────────────────────────────
+function populateRecipientSelect() {
+  const sel = document.getElementById('recipient-select');
+  sel.innerHTML = '<option value="">Add from friends…</option>';
+  friends().filter(f => f.email).forEach(f => {
+    const o = document.createElement('option');
+    o.value = f.email; o.textContent = `${f.name} <${f.email}>`;
+    sel.appendChild(o);
+  });
+}
+
+function addRecipient() {
+  const sel = document.getElementById('recipient-select');
+  if (!sel.value) return;
+  const f = friends().find(f => f.email === sel.value);
+  pushRecipient(f ? f.name : sel.value, sel.value);
+  sel.value = '';
+}
+
+function addCustomRecipient() {
+  const inp = document.getElementById('recipient-custom');
+  const email = inp.value.trim();
+  if (!email || !email.includes('@')) { showStatus('Enter a valid email address.', 'error'); return; }
+  pushRecipient(email, email); inp.value = '';
+}
+
+function pushRecipient(name, email) {
+  if (recipients.find(r => r.email === email)) return;
+  recipients.push({ name, email }); renderRecipientChips();
+}
+
+function removeRecipient(email) {
+  recipients = recipients.filter(r => r.email !== email); renderRecipientChips();
+}
+
+function renderRecipientChips() {
+  document.getElementById('recipient-chips').innerHTML = recipients.map(r =>
+    `<span class="rchip">${r.name}<button onclick="removeRecipient('${r.email}')" title="Remove">×</button></span>`
+  ).join('');
+}
+
+function updateCount() {
+  document.getElementById('char-count').textContent = document.getElementById('compose-body').value.length + ' characters';
+}
+
+function useTemplate(type) {
+  const T = {
+    happy: `Happy Birthday! 🎂\n\nWishing you an amazing day filled with joy and celebration. Hope this year brings you everything you've been hoping for!\n\nWith love ❤️`,
+    warm:  `Happy Birthday! 🎉\n\nI've been thinking about you today and just wanted to take a moment to say how much you mean to me. You bring so much warmth to everyone around you.\n\nI hope your birthday is as wonderful as you are. Wishing you a year full of health, happiness, and all your favourite things.\n\nWith love,`,
+    funny: `Happy Birthday, you legend! 🎂\n\nAnother year older, another year more distinguished. I won't mention how many candles are on that cake — your neighbours can already see the glow from space.\n\nSeriously though, hope you have an absolutely brilliant day. You deserve it! 🥳`,
+  };
+  document.getElementById('compose-body').value = T[type] || ''; updateCount();
+}
+
+function clearBody()    { document.getElementById('compose-body').value = ''; updateCount(); }
+function clearCompose() {
+  recipients = []; renderRecipientChips();
+  document.getElementById('compose-subject').value = '';
+  document.getElementById('compose-body').value    = '';
+  document.getElementById('send-status').style.display = 'none';
+  updateCount();
+}
+
+function composeFor(idx) {
+  const f = friends()[idx];
+  if (!f.email) { showStatus(f.name + ' has no email address saved.', 'error'); return; }
+  switchTab('compose'); populateRecipientSelect();
+  recipients = []; pushRecipient(f.name, f.email);
+  document.getElementById('compose-subject').value = `Happy Birthday, ${f.name}! 🎂`;
+}
+
+async function sendEmail() {
+  const subject  = document.getElementById('compose-subject').value.trim();
+  const body     = document.getElementById('compose-body').value.trim();
+  const statusEl = document.getElementById('send-status');
+  if (!recipients.length) { showStatus('Add at least one recipient.', 'error'); return; }
+  if (!subject)            { showStatus('Please add a subject line.', 'error'); return; }
+  if (!body)               { showStatus('Please write a message.', 'error'); return; }
+
+  const btn = document.getElementById('send-btn');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Sending…';
+  statusEl.style.display = 'none';
+
+  const errors = [];
+  for (const r of recipients) {
+    try {
+      await emailjs.send(EJSSVC, EJSTPL, { to_name: r.name, to_email: r.email, subject, message: body });
+    } catch(e) {
+      errors.push(`${r.name}: ${e.text || e.message || 'unknown error'}`);
+    }
+  }
+
+  btn.disabled = false; btn.textContent = 'Send email';
+  if (errors.length) {
+    statusEl.className = 'send-status err';
+    statusEl.textContent = 'Failed for: ' + errors.join('; ');
+  } else {
+    statusEl.className = 'send-status ok';
+    statusEl.textContent = `Sent to ${recipients.map(r => r.name).join(', ')}!`;
+    clearCompose();
+  }
+}
+
+// ── Heads-up ──────────────────────────────────────────────────────────────
+async function sendHeadsUp() {
+  const n = notif();
+  if (!n.email) { showStatus('Set your email in Notifications first.', 'error'); return; }
+  const days     = parseInt(n.days || 7);
+  const upcoming = friends().filter(f => daysUntil(f.birthday) === days);
+  if (!upcoming.length) { showStatus(`No birthdays in exactly ${days} days.`, 'error'); return; }
+  const list    = upcoming.map(f => `${f.name}${f.relation ? ' (' + f.relation + ')' : ''} — ${fmtB(f.birthday)}`).join('\n');
+  const subject = `Heads up: ${upcoming.length === 1 ? upcoming[0].name + "'s birthday" : 'upcoming birthdays'} in ${days} days`;
+  const body    = `Hi!\n\nJust a reminder — the following friend${upcoming.length > 1 ? 's have' : ' has'} a birthday in ${days} days:\n\n${list}\n\nHappy celebrating!`;
+  try {
+    await emailjs.send(EJSSVC, EJSTPL, { to_name: 'Me', to_email: n.email, subject, message: body });
+    showStatus('Heads-up sent to ' + n.email, 'success');
+  } catch(e) {
+    showStatus('Send failed: ' + (e.text || e.message || JSON.stringify(e)), 'error');
+  }
+}
+
+// ── Calendar import ───────────────────────────────────────────────────────
+async function scanCalendar() {
+  const btn = document.getElementById('scan-btn');
+  const el  = document.getElementById('import-result');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Scanning…';
+  el.innerHTML = '';
+  const today = new Date(), ya = new Date(today);
+  ya.setFullYear(today.getFullYear() + 1);
+  const prompt = `Use Google Calendar to find all events with "birthday" in the title from ${today.toISOString()} to ${ya.toISOString()}. Return ONLY a JSON array (no markdown, no explanation): [{"name":"Person Name","date":"YYYY-MM-DD","rawTitle":"original title"}]. Strip birthday/bday from name. Return [] if none.`;
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 2000, messages: [{ role: 'user', content: prompt }], mcp_servers: [{ type: 'url', url: 'https://gcal.mcp.claude.com/mcp', name: 'gcal-mcp' }] })
+    });
+    const data = await resp.json();
+    const txt  = data.content.filter(b => b.type === 'text').map(b => b.text).join('');
+    let events = [];
+    try { const m = txt.match(/\[[\s\S]*\]/); if (m) events = JSON.parse(m[0]); } catch {}
+    btn.disabled = false; btn.innerHTML = 'Scan for birthdays';
+    renderImportResults(events, el);
+  } catch(e) {
+    btn.disabled = false; btn.innerHTML = 'Scan for birthdays';
+    el.innerHTML = '<div class="card" style="color:var(--danger);font-size:13px;">Could not connect to Google Calendar. Make sure it is connected under Settings → Connectors in Claude.</div>';
+  }
+}
+
+function renderImportResults(events, el) {
+  if (!events.length) { el.innerHTML = '<div class="card"><div class="empty">No birthday events found.</div></div>'; return; }
+  const existing = friends().map(f => f.name.toLowerCase());
+  const fresh    = events.filter(e => !existing.includes(e.name.toLowerCase()));
+  const dupes    = events.filter(e =>  existing.includes(e.name.toLowerCase()));
+  window._pending = fresh;
+  let html = `<p class="stitle">${events.length} birthday event${events.length !== 1 ? 's' : ''} found</p><div class="card">`;
+  fresh.forEach((e, i) => {
+    html += `<div class="import-item" id="iitem-${i}">
+      <div><div style="font-size:13px;font-weight:500;">${e.name}</div><div style="font-size:12px;color:var(--text2);">${fmtB(e.date)} &bull; <span style="font-size:11px;color:var(--text3);">${e.rawTitle}</span></div></div>
+      <button class="btn btn-primary" style="padding:5px 12px;font-size:12px;" onclick="importOne(${i})">Import</button>
+    </div>`;
+  });
+  dupes.forEach(e => {
+    html += `<div class="import-item">
+      <div><div style="font-size:13px;font-weight:500;">${e.name}</div><div style="font-size:12px;color:var(--text2);">${fmtB(e.date)}</div></div>
+      <span class="already-tag">Already added</span>
+    </div>`;
+  });
+  if (fresh.length > 1) html += `<div style="margin-top:12px;"><button class="btn btn-primary" onclick="importAll()">Import all ${fresh.length} new birthdays</button></div>`;
+  html += '</div>'; el.innerHTML = html;
+}
+
+function importOne(i) {
+  const e = (window._pending || [])[i]; if (!e) return;
+  const ok = addFriend({ name: e.name, email: '', birthday: e.date, relation: 'Friend', notes: '', fromCalendar: true });
+  if (ok) {
+    const item = document.getElementById('iitem-' + i);
+    if (item) item.innerHTML = `<div><div style="font-size:13px;font-weight:500;">${e.name}</div><div style="font-size:12px;color:var(--text2);">${fmtB(e.date)}</div></div><span class="already-tag" style="color:var(--success);border-color:var(--success);">Imported ✓</span>`;
+    showStatus(e.name + ' imported!', 'success');
+  }
+}
+
+function importAll() {
+  let c = 0;
+  (window._pending || []).forEach(e => { if (addFriend({ name: e.name, email: '', birthday: e.date, relation: 'Friend', notes: '', fromCalendar: true })) c++; });
+  showStatus(`${c} birthday${c !== 1 ? 's' : ''} imported!`, 'success');
+  switchTab('friends');
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+const sn = notif();
+if (sn.email) document.getElementById('notif-email').value = sn.email;
+if (sn.days)  document.getElementById('notif-days').value  = sn.days;
+renderFriends();
+populateRecipientSelect();
+</script>
+</body>
+</html>
