@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self' https://api.emailjs.com https://*.supabase.co; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; base-uri 'self'; form-action 'none'; frame-ancestors 'none';" />
+  <meta name="referrer" content="no-referrer" />
   <title>Birthday Email Automator</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500&family=DM+Serif+Display&display=swap" rel="stylesheet">
@@ -212,15 +214,15 @@
       <div class="form-grid">
         <div>
           <label class="flabel">Name</label>
-          <input type="text" id="inp-name" placeholder="Full name" />
+          <input type="text" id="inp-name" placeholder="Full name" maxlength="100" autocomplete="off" />
         </div>
         <div>
           <label class="flabel">Email address</label>
-          <input type="email" id="inp-email" placeholder="their@email.com" />
+          <input type="email" id="inp-email" placeholder="their@email.com" maxlength="254" autocomplete="off" />
         </div>
         <div>
           <label class="flabel">Birthday</label>
-          <input type="date" id="inp-birthday" />
+          <input type="date" id="inp-birthday" min="1900-01-01" max="2099-12-31" />
         </div>
         <div>
           <label class="flabel">Relationship</label>
@@ -243,11 +245,11 @@
         </div>
         <div class="span2 custom-rel" id="custom-rel-wrap">
           <label class="flabel">Custom relationship</label>
-          <input type="text" id="inp-custom-rel" placeholder="e.g. Mentor, Pen pal…" />
+          <input type="text" id="inp-custom-rel" placeholder="e.g. Mentor, Pen pal…" maxlength="40" autocomplete="off" />
         </div>
         <div class="span2">
           <label class="flabel">Personal notes <span style="font-weight:400;color:var(--text3)">(optional)</span></label>
-          <textarea id="inp-notes" rows="2" style="resize:vertical" placeholder="Interests, memories, inside jokes…"></textarea>
+          <textarea id="inp-notes" rows="2" maxlength="500" style="resize:vertical" placeholder="Interests, memories, inside jokes…"></textarea>
         </div>
       </div>
       <div style="margin-top:14px;">
@@ -269,7 +271,7 @@
               <select id="recipient-select" onchange="addRecipientFromSelect()">
                 <option value="">Add from friends…</option>
               </select>
-              <input type="email" id="recipient-custom" placeholder="or type email…" style="flex:1;font-size:12px;min-width:0;" />
+              <input type="email" id="recipient-custom" placeholder="or type email…" maxlength="254" autocomplete="off" style="flex:1;font-size:12px;min-width:0;" />
               <button class="btn btn-outline" style="padding:6px 10px;font-size:12px;white-space:nowrap;" onclick="addCustomRecipient()">Add</button>
             </div>
           </div>
@@ -278,7 +280,7 @@
         <div class="compose-row">
           <span class="compose-label">Subject</span>
           <div class="compose-field">
-            <input type="text" id="compose-subject" placeholder="Happy Birthday! 🎂" />
+            <input type="text" id="compose-subject" placeholder="Happy Birthday! 🎂" maxlength="200" />
           </div>
         </div>
 
@@ -291,7 +293,7 @@
               <button class="tpl-btn" onclick="useTemplate('funny')">Funny &amp; casual</button>
               <button class="tpl-btn" onclick="clearBody()">Clear</button>
             </div>
-            <textarea id="compose-body" rows="10" style="resize:vertical;font-size:13px;line-height:1.65;" placeholder="Write your message here…" oninput="updateCount()"></textarea>
+            <textarea id="compose-body" rows="10" maxlength="5000" style="resize:vertical;font-size:13px;line-height:1.65;" placeholder="Write your message here…" oninput="updateCount()"></textarea>
             <div class="char-count" id="char-count">0 characters</div>
           </div>
         </div>
@@ -365,7 +367,7 @@
       <div class="notif-box">
         <div class="nrow">
           <span class="nlabel">Your email</span>
-          <input type="email" id="notif-email" placeholder="you@example.com" style="flex:1;" />
+          <input type="email" id="notif-email" placeholder="you@example.com" maxlength="254" style="flex:1;" />
         </div>
         <div class="nrow">
           <span class="nlabel">Days in advance</span>
@@ -399,7 +401,7 @@
           <div class="settings-sub">Account → API Keys</div>
         </div>
         <div class="settings-field">
-          <input type="password" id="cfg-pubkey" placeholder="e.g. abc123XYZ…" autocomplete="off" />
+          <input type="password" id="cfg-pubkey" placeholder="e.g. abc123XYZ…" autocomplete="off" maxlength="200" />
         </div>
       </div>
       <div class="settings-row">
@@ -408,7 +410,7 @@
           <div class="settings-sub">Email Services → your service</div>
         </div>
         <div class="settings-field">
-          <input type="text" id="cfg-service" placeholder="service_xxxxxxx" />
+          <input type="text" id="cfg-service" placeholder="service_xxxxxxx" maxlength="100" autocomplete="off" />
         </div>
       </div>
       <div class="settings-row">
@@ -417,7 +419,7 @@
           <div class="settings-sub">Email Templates → your template</div>
         </div>
         <div class="settings-field">
-          <input type="text" id="cfg-template" placeholder="template_xxxxxxx" />
+          <input type="text" id="cfg-template" placeholder="template_xxxxxxx" maxlength="100" autocomplete="off" />
         </div>
       </div>
 
@@ -450,13 +452,51 @@
 </div>
 
 <script>
+// ── Security helpers ─────────────────────────────────────────────────────
+// Escape user-controlled strings before inserting into innerHTML. Covers
+// the five HTML special chars; use escAttr for attribute contexts.
+const ESC_MAP = {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#x27;','/':'&#x2F;','`':'&#x60;','=':'&#x3D;'};
+const esc     = s => String(s==null?'':s).replace(/[&<>"'`=\/]/g, c => ESC_MAP[c]);
+const escAttr = esc;  // same character class covers attribute contexts
+// Remove control characters (0x00-0x1F except \n, \t) and delete (0x7F).
+// Prevents header injection in email subjects and hidden unicode tricks.
+const stripCtrl = s => String(s==null?'':s).replace(/[\x00-\x08\x0B-\x1F\x7F]/g, '');
+// Strict-enough email regex — no spaces, exactly one @, at least one dot in domain, bounded length.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+const isValidEmail = s => typeof s === 'string' && s.length <= 254 && EMAIL_RE.test(s);
+// Clamp a string to maxLen after trimming + stripCtrl.
+const clean = (s, maxLen) => stripCtrl(String(s==null?'':s).trim()).slice(0, maxLen);
+// Validate an ISO birthday (YYYY-MM-DD) within a plausible range.
+function isValidBirthday(s) {
+  if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const [y,m,d] = s.split('-').map(Number);
+  if (y < 1900 || y > 2099 || m < 1 || m > 12 || d < 1 || d > 31) return false;
+  const dt = new Date(s+'T00:00:00');
+  return dt.getUTCFullYear()===y && (dt.getUTCMonth()+1)===m && dt.getUTCDate()===d;
+}
+// CSV formula-injection guard: prefix any cell that starts with =, +, -, @, TAB, CR with a single quote.
+const csvSafe = v => {
+  const s = String(v==null?'':v);
+  return /^[=+\-@\t\r]/.test(s) ? "'"+s : s;
+};
+
 // ── Storage keys ─────────────────────────────────────────────────────────
 const FK='bday_friends_v5', NK='bday_notif_v3', CK='bday_cfg_v1';
 const ld  = k => { try { return JSON.parse(localStorage.getItem(k)||'null'); } catch { return null; } };
-const sv  = (k,v) => localStorage.setItem(k, JSON.stringify(v));
-const friends = () => ld(FK)||[];
-const notif   = () => ld(NK)||{};
-const cfg     = () => ld(CK)||{};
+const sv  = (k,v) => {
+  try { localStorage.setItem(k, JSON.stringify(v)); return true; }
+  catch (e) {
+    console.error('Storage write failed:', e);
+    try { showStatus('Could not save — storage full or blocked.', 'error'); } catch {}
+    return false;
+  }
+};
+const friends = () => { const v = ld(FK); return Array.isArray(v) ? v : []; };
+const notif   = () => { const v = ld(NK); return (v && typeof v === 'object') ? v : {}; };
+const cfg     = () => { const v = ld(CK); return (v && typeof v === 'object') ? v : {}; };
+
+// Cap total friends to keep localStorage and render cost bounded.
+const MAX_FRIENDS = 2000;
 
 let activeFilter='All', recipients=[];
 
@@ -468,12 +508,13 @@ function getEJSConfig() {
   const pubKey  = saved.pubKey  || '%%EMAILJS_PUBLIC_KEY%%';
   const service = saved.service || '%%EMAILJS_SERVICE_ID%%';
   const tpl     = saved.tpl     || '%%EMAILJS_TEMPLATE_ID%%';
-  // Detect unfilled placeholders
-  const isPlaceholder = s => !s || s.startsWith('%%');
+  // Detect unfilled placeholders or tampered values
+  const SAFE = /^[A-Za-z0-9_\-]+$/;
+  const ok = s => typeof s === 'string' && !s.startsWith('%%') && SAFE.test(s) && s.length <= 200;
   return {
-    pubKey:  isPlaceholder(pubKey)  ? '' : pubKey,
-    service: isPlaceholder(service) ? '' : service,
-    tpl:     isPlaceholder(tpl)     ? '' : tpl,
+    pubKey:  ok(pubKey)  ? pubKey  : '',
+    service: ok(service) ? service : '',
+    tpl:     ok(tpl)     ? tpl     : '',
   };
 }
 
@@ -555,8 +596,15 @@ function buildFilterBar() {
   const fs=friends();
   const rels=['All',...new Set(fs.map(f=>f.relation).filter(Boolean))];
   const bar=document.getElementById('filter-bar');
-  if(rels.length<=1){bar.innerHTML='';return;}
-  bar.innerHTML=rels.map(r=>`<button class="chip${r===activeFilter?' active':''}" onclick="setFilter('${r}')">${r}</button>`).join('');
+  if(rels.length<=1){bar.textContent='';return;}
+  bar.textContent='';
+  rels.forEach(r => {
+    const btn = document.createElement('button');
+    btn.className = 'chip' + (r===activeFilter ? ' active' : '');
+    btn.textContent = r;
+    btn.addEventListener('click', () => setFilter(r));
+    bar.appendChild(btn);
+  });
 }
 function setFilter(r){activeFilter=r;renderFriends();}
 
@@ -577,25 +625,25 @@ function renderFriends() {
   buildFilterBar();
   const filtered=activeFilter==='All'?fs:fs.filter(f=>f.relation===activeFilter);
   if(!fs.length){el.innerHTML='<div class="empty">No one added yet. Use Add friend or Import.</div>';return;}
-  if(!filtered.length){el.innerHTML=`<div class="empty">No ${activeFilter}s added yet.</div>`;return;}
+  if(!filtered.length){el.innerHTML=`<div class="empty">No ${esc(activeFilter)}s added yet.</div>`;return;}
   el.innerHTML=filtered.map(f=>{
     const ri=fs.indexOf(f);
     const d=daysUntil(f.birthday);
     const badge = d===0?'<span class="pill pill-today" style="margin-left:4px;">🎉 Today!</span>'
                 : d<=rd?`<span class="pill pill-week" style="margin-left:4px;">In ${d}d ⏰</span>`
                 : d<=30?`<span class="pill pill-soon" style="margin-left:4px;">In ${d}d</span>`:'';
-    const relPill=f.relation?`<span class="pill" style="${pillStyle(f.relation)};margin-left:4px;">${f.relation}</span>`:'';
-    const srcPill=f.source?`<span class="pill" style="background:var(--bg2);color:var(--text3);margin-left:4px;font-size:10px;">${f.source}</span>`:'';
-    const meta=(f.email?f.email+' · ':'')+fmtB(f.birthday);
+    const relPill=f.relation?`<span class="pill" style="${pillStyle(f.relation)};margin-left:4px;">${esc(f.relation)}</span>`:'';
+    const srcPill=f.source?`<span class="pill" style="background:var(--bg2);color:var(--text3);margin-left:4px;font-size:10px;">${esc(f.source)}</span>`:'';
+    const meta=(f.email?esc(f.email)+' · ':'')+esc(fmtB(f.birthday));
     return `<div class="friend-row">
-      <div class="avatar" style="${avStyle(f.relation)}">${initials(f.name)}</div>
+      <div class="avatar" style="${avStyle(f.relation)}">${esc(initials(f.name))}</div>
       <div class="friend-info">
         <div style="display:flex;align-items:center;flex-wrap:wrap;gap:2px;">
-          <span class="friend-name">${f.name}</span>${relPill}${srcPill}${badge}
+          <span class="friend-name">${esc(f.name)}</span>${relPill}${srcPill}${badge}
         </div>
         <div class="friend-meta">${meta}</div>
         <div class="gift-row">
-          <input class="gift-input" type="text" id="ginp-${ri}" placeholder="${giftQuery(f)}" />
+          <input class="gift-input" type="text" id="ginp-${ri}" maxlength="200" placeholder="${escAttr(giftQuery(f))}" />
           <button class="gbtn etsy" onclick="openGift('etsy',${ri})"><span class="shop-dot e">E</span>Etsy</button>
           <button class="gbtn amzn" onclick="openGift('amzn',${ri})"><span class="shop-dot a">A</span>Amazon</button>
           <button class="gbtn email-btn" onclick="composeFor(${ri})">✉ Email</button>
@@ -613,12 +661,12 @@ function renderUpcoming() {
   const sorted=[...fs].map(f=>({...f,d:daysUntil(f.birthday)})).sort((a,b)=>a.d-b.d);
   el.innerHTML=sorted.map(f=>{
     const badge=f.d===0?'<span class="pill pill-today">Today!</span>':f.d<=days?'<span class="pill pill-week">Reminder window</span>':'';
-    const relPill=f.relation?`<span class="pill" style="${pillStyle(f.relation)}">${f.relation}</span>`:'';
+    const relPill=f.relation?`<span class="pill" style="${pillStyle(f.relation)}">${esc(f.relation)}</span>`:'';
     return `<div class="upcoming-row">
-      <div class="avatar" style="width:30px;height:30px;font-size:11px;${avStyle(f.relation)}">${initials(f.name)}</div>
+      <div class="avatar" style="width:30px;height:30px;font-size:11px;${avStyle(f.relation)}">${esc(initials(f.name))}</div>
       <div style="flex:1;min-width:0;">
-        <div style="font-size:13px;font-weight:500;display:flex;align-items:center;gap:5px;flex-wrap:wrap;">${f.name}${relPill}</div>
-        <div style="font-size:12px;color:var(--text2);">${fmtB(f.birthday)}</div>
+        <div style="font-size:13px;font-weight:500;display:flex;align-items:center;gap:5px;flex-wrap:wrap;">${esc(f.name)}${relPill}</div>
+        <div style="font-size:12px;color:var(--text2);">${esc(fmtB(f.birthday))}</div>
       </div>
       <span style="font-size:12px;color:var(--text2);white-space:nowrap;margin-right:6px;">${f.d===0?'Today':'In '+f.d+'d'}</span>
       ${badge}
@@ -630,12 +678,14 @@ function removeFriend(i){const fs=friends();fs.splice(i,1);sv(FK,fs);activeFilte
 
 // ── Add friend ────────────────────────────────────────────────────────────
 function addFriendFromForm() {
-  const name    =document.getElementById('inp-name').value.trim();
-  const email   =document.getElementById('inp-email').value.trim();
-  const birthday=document.getElementById('inp-birthday').value;
-  const relation=getRelation();
-  const notes   =document.getElementById('inp-notes').value.trim();
-  if(!name||!birthday){showStatus('Name and birthday are required.','error');return;}
+  const name    = clean(document.getElementById('inp-name').value, 100);
+  const email   = clean(document.getElementById('inp-email').value, 254);
+  const birthday= document.getElementById('inp-birthday').value;
+  const relation= clean(getRelation(), 40);
+  const notes   = clean(document.getElementById('inp-notes').value, 500);
+  if(!name){showStatus('Name is required.','error');return;}
+  if(!isValidBirthday(birthday)){showStatus('Please enter a valid birthday between 1900 and 2099.','error');return;}
+  if(email && !isValidEmail(email)){showStatus('Email address is not valid.','error');return;}
   if(!addFriend({name,email,birthday,relation,notes})) return;
   ['inp-name','inp-email','inp-birthday','inp-notes','inp-custom-rel'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('inp-relation').value='';
@@ -646,9 +696,20 @@ function addFriendFromForm() {
 
 function addFriend(data) {
   const fs=friends();
-  if(fs.find(f=>f.name.toLowerCase()===data.name.toLowerCase())){showStatus(data.name+' is already in your list.','warn');return false;}
-  fs.push({name:data.name,email:data.email||'',birthday:data.birthday,relation:data.relation||'',notes:data.notes||'',source:data.source||''});
-  sv(FK,fs); renderFriends(); return true;
+  if(fs.length >= MAX_FRIENDS){showStatus(`Friend limit reached (${MAX_FRIENDS}).`,'error');return false;}
+  // Re-sanitize at the boundary so callers (CSV/ICS import, internal code, etc.) can't bypass the form checks.
+  const name     = clean(data.name, 100);
+  const email    = clean(data.email, 254);
+  const birthday = data.birthday;
+  const relation = clean(data.relation, 40);
+  const notes    = clean(data.notes, 500);
+  const source   = clean(data.source, 20);
+  if(!name || !isValidBirthday(birthday)) {showStatus('Invalid friend record skipped.','warn');return false;}
+  if(email && !isValidEmail(email)) {showStatus(`Skipping ${name}: email not valid.`,'warn');return false;}
+  if(fs.find(f=>f.name.toLowerCase()===name.toLowerCase())){showStatus(name+' is already in your list.','warn');return false;}
+  fs.push({name,email,birthday,relation,notes,source});
+  if(!sv(FK,fs)) return false;
+  renderFriends(); return true;
 }
 
 // ── Settings ─────────────────────────────────────────────────────────────
@@ -660,14 +721,20 @@ function loadSettingsUI() {
 }
 
 async function saveEmailConfig() {
-  const pubKey  = document.getElementById('cfg-pubkey').value.trim();
-  const service = document.getElementById('cfg-service').value.trim();
-  const tpl     = document.getElementById('cfg-template').value.trim();
+  const pubKey  = clean(document.getElementById('cfg-pubkey').value, 200);
+  const service = clean(document.getElementById('cfg-service').value, 100);
+  const tpl     = clean(document.getElementById('cfg-template').value, 100);
   const statusEl= document.getElementById('cfg-status');
+  // EmailJS IDs/keys are ASCII alphanumerics plus a few safe chars — reject anything weird.
+  const safeKey = /^[A-Za-z0-9_\-]+$/;
 
   if(!pubKey||!service||!tpl) {
     statusEl.className='send-status err'; statusEl.style.display='block';
     statusEl.textContent='Please fill in all three fields.'; return;
+  }
+  if(!safeKey.test(pubKey)||!safeKey.test(service)||!safeKey.test(tpl)) {
+    statusEl.className='send-status err'; statusEl.style.display='block';
+    statusEl.textContent='Keys may only contain letters, numbers, underscore, and hyphen.'; return;
   }
   sv(CK,{pubKey,service,tpl});
   _ejsReady=false;
@@ -680,7 +747,7 @@ async function saveEmailConfig() {
     statusEl.textContent='✓ Keys saved. EmailJS is ready.';
   } catch(e) {
     statusEl.className='send-status err'; statusEl.style.display='block';
-    statusEl.textContent='Could not initialise EmailJS: '+(e.message||JSON.stringify(e));
+    statusEl.textContent='Could not initialise EmailJS: '+stripCtrl(String(e && e.message || 'unknown error')).slice(0,300);
   }
 }
 
@@ -694,11 +761,19 @@ function clearEmailConfig() {
 function exportCSV() {
   const fs=friends();
   if(!fs.length){showStatus('No friends to export.','warn');return;}
-  const rows=[['Name','Email','Birthday','Relationship','Notes'],...fs.map(f=>[f.name,f.email,f.birthday,f.relation,f.notes].map(v=>`"${(v||'').replace(/"/g,'""')}"`)  )];
+  const rows=[
+    ['Name','Email','Birthday','Relationship','Notes'],
+    ...fs.map(f =>
+      [f.name,f.email,f.birthday,f.relation,f.notes]
+        .map(v => `"${csvSafe(v).replace(/"/g,'""')}"`)  // csvSafe blocks =/+/-/@ formula injection in Excel
+    ),
+  ];
   const csv=rows.map(r=>r.join(',')).join('\n');
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
   const a=document.createElement('a');
-  a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
+  a.href = URL.createObjectURL(blob);
   a.download='birthdays.csv'; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
 function clearAllData() {
@@ -709,10 +784,11 @@ function clearAllData() {
 }
 
 function saveNotif() {
-  const email=document.getElementById('notif-email').value.trim();
-  const days=document.getElementById('notif-days').value;
-  if(!email){showStatus('Please enter your email.','error');return;}
-  sv(NK,{email,days}); showStatus('Settings saved!'); renderFriends(); renderUpcoming();
+  const email = clean(document.getElementById('notif-email').value, 254);
+  const daysN = parseInt(document.getElementById('notif-days').value, 10);
+  if(!isValidEmail(email)){showStatus('Please enter a valid email.','error');return;}
+  if(!Number.isFinite(daysN) || daysN < 1 || daysN > 30){showStatus('Days must be between 1 and 30.','error');return;}
+  sv(NK,{email,days:daysN}); showStatus('Settings saved!'); renderFriends(); renderUpcoming();
 }
 
 // ── Compose ───────────────────────────────────────────────────────────────
@@ -735,20 +811,36 @@ function addRecipientFromSelect() {
 
 function addCustomRecipient() {
   const inp=document.getElementById('recipient-custom');
-  const email=inp.value.trim();
-  if(!email||!email.includes('@')){showStatus('Enter a valid email address.','error');return;}
+  const email = clean(inp.value, 254);
+  if(!isValidEmail(email)){showStatus('Enter a valid email address.','error');return;}
   pushRecipient(email,email); inp.value='';
 }
 
+const MAX_RECIPIENTS = 50;
 function pushRecipient(name,email) {
-  if(recipients.find(r=>r.email===email)) return;
-  recipients.push({name,email}); renderRecipientChips();
+  const cleanName  = clean(name,  100);
+  const cleanEmail = clean(email, 254);
+  if(!isValidEmail(cleanEmail)) {showStatus('Recipient email not valid.','error');return;}
+  if(recipients.length >= MAX_RECIPIENTS) {showStatus(`Recipient limit reached (${MAX_RECIPIENTS}).`,'warn');return;}
+  if(recipients.find(r=>r.email===cleanEmail)) return;
+  recipients.push({name:cleanName||cleanEmail, email:cleanEmail}); renderRecipientChips();
 }
 function removeRecipient(email) { recipients=recipients.filter(r=>r.email!==email); renderRecipientChips(); }
 function renderRecipientChips() {
-  document.getElementById('recipient-chips').innerHTML=recipients.map(r=>
-    `<span class="rchip">${r.name}<button onclick="removeRecipient('${r.email}')" title="Remove">×</button></span>`
-  ).join('');
+  const host = document.getElementById('recipient-chips');
+  host.textContent = '';
+  recipients.forEach(r => {
+    const span = document.createElement('span');
+    span.className = 'rchip';
+    span.textContent = r.name;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.title = 'Remove';
+    btn.textContent = '×';
+    btn.addEventListener('click', () => removeRecipient(r.email));
+    span.appendChild(btn);
+    host.appendChild(span);
+  });
 }
 function updateCount() { document.getElementById('char-count').textContent=document.getElementById('compose-body').value.length+' characters'; }
 const TEMPLATES = {
@@ -787,8 +879,9 @@ function openMailto() {
 
 // ── Send via EmailJS with full CORS & config error handling ───────────────
 async function sendEmail() {
-  const subject  = document.getElementById('compose-subject').value.trim();
-  const body     = document.getElementById('compose-body').value.trim();
+  // stripCtrl on subject blocks CRLF header injection into EmailJS templates; on body it just cleans null bytes.
+  const subject  = clean(document.getElementById('compose-subject').value, 200);
+  const body     = stripCtrl(document.getElementById('compose-body').value.trim()).slice(0, 5000);
   const statusEl = document.getElementById('send-status');
   const fallbackEl = document.getElementById('mailto-fallback');
 
@@ -799,7 +892,7 @@ async function sendEmail() {
   const ejsCfg = getEJSConfig();
   if(!ejsCfg.pubKey||!ejsCfg.service||!ejsCfg.tpl) {
     statusEl.className='send-status warn'; statusEl.style.display='block';
-    statusEl.innerHTML='EmailJS is not configured. <a href="#" onclick="switchTab(\'settings\');return false;" style="color:inherit;font-weight:500;">Go to Settings</a> to add your keys, or use <strong>Open in mail app</strong> to send via your email client.';
+    statusEl.textContent = 'EmailJS is not configured. Go to Settings to add your keys, or use "Open in mail app" to send via your email client.';
     fallbackEl.classList.add('show'); return;
   }
 
@@ -814,7 +907,7 @@ async function sendEmail() {
   for(const r of recipients) {
     try {
       await emailjs.send(ejsCfg.service, ejsCfg.tpl, {
-        to_name:  r.name,
+        to_name:  stripCtrl(r.name),
         to_email: r.email,
         subject,
         message:  body,
@@ -834,25 +927,28 @@ async function sendEmail() {
     clearCompose();
   } else {
     statusEl.className='send-status err'; statusEl.style.display='block';
-    statusEl.innerHTML=errors.join('<br>');
-    if(errors.some(e=>e.includes('network')||e.includes('CORS')||e.includes('fetch'))) {
+    // Plain text: errors include user-controlled email addresses, so innerHTML would be an XSS sink.
+    statusEl.textContent = errors.join(' — ');
+    if(errors.some(e=>/network|cors|fetch/i.test(e))) {
       fallbackEl.classList.add('show');
     }
   }
 }
 
 function diagnoseEmailJSError(e, toEmail) {
-  const text = (e.text||e.message||JSON.stringify(e)||'').toLowerCase();
+  const safeEmail = stripCtrl(String(toEmail||''));
+  const text = String(e && (e.text||e.message) || '').toLowerCase();
   if(text.includes('cors')||text.includes('network')||text.includes('failed to fetch')||text.includes('networkerror')) {
-    return `Network/CORS error sending to ${toEmail}. This usually means: (1) your EmailJS account is on a free plan and the domain isn't whitelisted, or (2) you're running from a local file. Try adding your domain in EmailJS → Account → Allowed Origins, or use <strong>Open in mail app</strong> as a fallback.`;
+    return `Network/CORS error sending to ${safeEmail}. Usually: (1) free-plan domain not whitelisted, or (2) running from a local file. Add your domain in EmailJS → Account → Allowed Origins, or use "Open in mail app".`;
   }
   if(text.includes('invalid')||text.includes('not found')||text.includes('400')||text.includes('401')||text.includes('403')) {
-    return `EmailJS credentials error sending to ${toEmail}. Check your Service ID, Template ID, and Public Key in Settings.`;
+    return `EmailJS credentials error sending to ${safeEmail}. Check Service ID, Template ID, and Public Key in Settings.`;
   }
   if(text.includes('quota')||text.includes('limit')||text.includes('429')) {
-    return `EmailJS monthly quota reached. Upgrade your plan at emailjs.com or use <strong>Open in mail app</strong>.`;
+    return `EmailJS monthly quota reached. Upgrade your plan at emailjs.com or use "Open in mail app".`;
   }
-  return `Failed to send to ${toEmail}: ${e.text||e.message||JSON.stringify(e)}`;
+  const raw = String(e && (e.text||e.message) || 'unknown error').slice(0, 300);
+  return `Failed to send to ${safeEmail}: ${stripCtrl(raw)}`;
 }
 
 // ── Heads-up sender ───────────────────────────────────────────────────────
@@ -862,8 +958,8 @@ async function sendHeadsUp() {
   const days=parseInt(n.days||7);
   const upcoming=friends().filter(f=>daysUntil(f.birthday)===days);
   if(!upcoming.length){showStatus(`No birthdays in exactly ${days} days.`,'warn');return;}
-  const list=upcoming.map(f=>`${f.name}${f.relation?' ('+f.relation+')':''} — ${fmtB(f.birthday)}`).join('\n');
-  const subject=`Heads up: ${upcoming.length===1?upcoming[0].name+"'s birthday":'upcoming birthdays'} in ${days} days`;
+  const list=upcoming.map(f=>`${stripCtrl(f.name)}${f.relation?' ('+stripCtrl(f.relation)+')':''} — ${fmtB(f.birthday)}`).join('\n');
+  const subject=stripCtrl(`Heads up: ${upcoming.length===1?upcoming[0].name+"'s birthday":'upcoming birthdays'} in ${days} days`).slice(0,200);
   const body=`Hi!\n\nJust a reminder — the following friend${upcoming.length>1?'s have':' has'} a birthday in ${days} days:\n\n${list}\n\nHappy celebrating!`;
 
   const ejsCfg=getEJSConfig();
@@ -881,20 +977,45 @@ async function sendHeadsUp() {
 }
 
 // ── ICS / vCard parser ────────────────────────────────────────────────────
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;  // 5 MB hard cap on any import
+function checkUpload(file, allowedExt) {
+  if(!file) return false;
+  if(file.size > MAX_UPLOAD_BYTES) {showStatus('File is too large (max 5 MB).','error');return false;}
+  const name = (file.name||'').toLowerCase();
+  if(allowedExt && !allowedExt.some(ext=>name.endsWith(ext))) {
+    showStatus(`Unsupported file type. Expected: ${allowedExt.join(', ')}.`,'error');
+    return false;
+  }
+  return true;
+}
 function onDragOver(e, id){e.preventDefault();document.getElementById(id).classList.add('drag-over');}
 function onDragLeave(id){document.getElementById(id).classList.remove('drag-over');}
 function onDrop(e,type){
   e.preventDefault();
   const id=type+'-drop'; document.getElementById(id).classList.remove('drag-over');
   const file=e.dataTransfer.files[0]; if(!file) return;
-  if(type==='ics') processICS(file); else processCSV(file);
+  if(type==='ics') {
+    if(checkUpload(file, ['.ics','.vcf','.vcard'])) processICS(file);
+  } else {
+    if(checkUpload(file, ['.csv','.txt'])) processCSV(file);
+  }
 }
-function handleICSFile(e){const f=e.target.files[0];if(f)processICS(f);}
-function handleCSVFile(e){const f=e.target.files[0];if(f)processCSV(f);}
+function handleICSFile(e){const f=e.target.files[0];if(checkUpload(f,['.ics','.vcf','.vcard'])) processICS(f);}
+function handleCSVFile(e){const f=e.target.files[0];if(checkUpload(f,['.csv','.txt'])) processCSV(f);}
 
+const MAX_IMPORT_ROWS = 1000;
 function processICS(file) {
   const reader=new FileReader();
-  reader.onload=e=>{ const events=parseICS(e.target.result); renderImportResults(events,'ics-result'); };
+  reader.onerror = () => showStatus('Could not read file.','error');
+  reader.onload=e=>{
+    try {
+      const events=parseICS(e.target.result).slice(0, MAX_IMPORT_ROWS);
+      renderImportResults(events,'ics-result');
+    } catch(err) {
+      console.error(err);
+      showStatus('Could not parse the ICS/vCard file.','error');
+    }
+  };
   reader.readAsText(file);
 }
 
@@ -913,17 +1034,19 @@ function parseICS(text) {
       inVCard=false;continue;
     }
     if(!inVCard) continue;
-    if(line.startsWith('FN:')) vcName=line.slice(3).trim();
+    if(line.startsWith('FN:')) vcName=clean(line.slice(3), 100);
     if(line.startsWith('N:')&&!vcName){
       const parts=line.slice(2).split(';');
-      vcName=[parts[1],parts[0]].filter(Boolean).join(' ').trim();
+      vcName=clean([parts[1],parts[0]].filter(Boolean).join(' '), 100);
     }
-    if(line.includes('EMAIL')) vcEmail=line.split(':').slice(1).join(':').trim();
+    if(line.includes('EMAIL')) vcEmail=clean(line.split(':').slice(1).join(':'), 254);
     if(line.startsWith('BDAY')){
       const val=line.split(':').pop().trim().replace(/[^0-9]/g,'');
       if(val.length===8){
         const date=`${val.slice(0,4)}-${val.slice(4,6)}-${val.slice(6,8)}`;
-        if(vcName) results.push({name:vcName,email:vcEmail,date,source:'vCard'});
+        if(vcName && isValidBirthday(date)) {
+          results.push({name:vcName, email: isValidEmail(vcEmail)?vcEmail:'', date, source:'vCard'});
+        }
       }
     }
   }
@@ -934,19 +1057,19 @@ function parseICS(text) {
     const line=raw.trim();
     if(line==='BEGIN:VEVENT'){inEvent=true;evSummary='';evDate='';evEmail='';continue;}
     if(line==='END:VEVENT'){
-      if(evSummary&&evDate){
+      if(evSummary&&evDate&&isValidBirthday(evDate)){
         const lc=evSummary.toLowerCase();
         if(lc.includes('birthday')||lc.includes('bday')){
-          const name=evSummary.replace(/birthday|bday|'s|'s/gi,'').trim()||evSummary;
-          if(name) results.push({name,email:evEmail,date:evDate,source:'iCal'});
+          const name=clean(evSummary.replace(/birthday|bday|'s|'s/gi,'').trim()||evSummary, 100);
+          if(name) results.push({name, email: isValidEmail(evEmail)?evEmail:'', date:evDate, source:'iCal'});
         }
       }
       inEvent=false;continue;
     }
     if(!inEvent) continue;
-    if(line.startsWith('SUMMARY:')) evSummary=line.slice(8).trim();
+    if(line.startsWith('SUMMARY:')) evSummary=clean(line.slice(8), 100);
     if(line.startsWith('ATTENDEE')||line.includes('EMAIL=')) {
-      const m=line.match(/[:;]([^:;@]+@[^:;]+)/); if(m) evEmail=m[1].trim();
+      const m=line.match(/[:;]([^:;@]+@[^:;]+)/); if(m) evEmail=clean(m[1], 254);
     }
     if(line.startsWith('DTSTART')){
       const val=line.split(':').pop().trim().replace(/[^0-9]/g,'').slice(0,8);
@@ -960,7 +1083,16 @@ function parseICS(text) {
 // ── CSV parser ────────────────────────────────────────────────────────────
 function processCSV(file){
   const reader=new FileReader();
-  reader.onload=e=>{const events=parseCSV(e.target.result);renderImportResults(events,'csv-result');};
+  reader.onerror = () => showStatus('Could not read file.','error');
+  reader.onload=e=>{
+    try {
+      const events=parseCSV(e.target.result).slice(0, MAX_IMPORT_ROWS);
+      renderImportResults(events,'csv-result');
+    } catch(err) {
+      console.error(err);
+      showStatus('Could not parse the CSV file.','error');
+    }
+  };
   reader.readAsText(file);
 }
 
@@ -976,16 +1108,19 @@ function parseCSV(text) {
     const cols=parseCSVRow(line);
     const rawDate=(cols[iBday]||'').trim();
     const date=parseDate(rawDate);
-    if(!date) return null;
+    if(!date || !isValidBirthday(date)) return null;
+    const name = clean(cols[iName]||'', 100);
+    if(!name) return null;
+    const email = iEmail>-1 ? clean(cols[iEmail]||'', 254) : '';
     return {
-      name:(cols[iName]||'').trim(),
-      email:iEmail>-1?(cols[iEmail]||'').trim():'',
+      name,
+      email: email && isValidEmail(email) ? email : '',
       date,
-      relation:iRel>-1?(cols[iRel]||'').trim():'',
-      notes:iNotes>-1?(cols[iNotes]||'').trim():'',
+      relation: iRel>-1 ? clean(cols[iRel]||'', 40) : '',
+      notes:    iNotes>-1 ? clean(cols[iNotes]||'', 500) : '',
       source:'CSV',
     };
-  }).filter(r=>r&&r.name);
+  }).filter(Boolean);
 }
 
 function parseCSVRow(line) {
@@ -1031,20 +1166,21 @@ function renderImportResults(events, elId) {
   const dupes=events.filter(e=>existing.includes(e.name.toLowerCase()));
   window._pending={events:fresh,elId};
 
+  const safeElId = esc(elId);  // elId is developer-controlled but cheap to harden
   let html=`<p class="stitle" style="margin-top:12px;">${events.length} birthday${events.length!==1?'s':''} found · ${fresh.length} new</p><div class="card">`;
 
   fresh.forEach((e,i)=>{
-    html+=`<div class="import-item" id="imp-${elId}-${i}">
+    html+=`<div class="import-item" id="imp-${safeElId}-${i}">
       <div>
-        <div class="import-name">${e.name}</div>
-        <div class="import-date">${fmtB(e.date)}${e.email?' · '+e.email:''}${e.relation?' · '+e.relation:''} <span style="font-size:10px;color:var(--text3);">${e.source}</span></div>
+        <div class="import-name">${esc(e.name)}</div>
+        <div class="import-date">${esc(fmtB(e.date))}${e.email?' · '+esc(e.email):''}${e.relation?' · '+esc(e.relation):''} <span style="font-size:10px;color:var(--text3);">${esc(e.source||'')}</span></div>
       </div>
-      <button class="btn btn-primary" style="padding:5px 12px;font-size:12px;flex-shrink:0;" onclick="importOne('${elId}',${i})">Import</button>
+      <button class="btn btn-primary" style="padding:5px 12px;font-size:12px;flex-shrink:0;" onclick="importOne('${escAttr(elId)}',${i})">Import</button>
     </div>`;
   });
   dupes.forEach(e=>{
     html+=`<div class="import-item">
-      <div><div class="import-name">${e.name}</div><div class="import-date">${fmtB(e.date)}</div></div>
+      <div><div class="import-name">${esc(e.name)}</div><div class="import-date">${esc(fmtB(e.date))}</div></div>
       <span class="already-tag">Already added</span>
     </div>`;
   });
@@ -1054,13 +1190,20 @@ function renderImportResults(events, elId) {
   html+='</div>'; el.innerHTML=html;
 }
 
+function markImported(item, e) {
+  if(!item) return;
+  item.innerHTML =
+    `<div><div class="import-name">${esc(e.name)}</div>`+
+    `<div class="import-date">${esc(fmtB(e.date))}</div></div>`+
+    `<span class="already-tag" style="color:var(--success);border-color:var(--success);">Imported ✓</span>`;
+}
+
 function importOne(elId,i) {
   const p=window._pending; if(!p||p.elId!==elId) return;
   const e=p.events[i]; if(!e) return;
   const ok=addFriend({name:e.name,email:e.email||'',birthday:e.date,relation:e.relation||'Friend',notes:e.notes||'',source:e.source});
   if(ok){
-    const item=document.getElementById(`imp-${elId}-${i}`);
-    if(item) item.innerHTML=`<div><div class="import-name">${e.name}</div><div class="import-date">${fmtB(e.date)}</div></div><span class="already-tag" style="color:var(--success);border-color:var(--success);">Imported ✓</span>`;
+    markImported(document.getElementById(`imp-${elId}-${i}`), e);
     showStatus(e.name+' imported!');
   }
 }
@@ -1071,8 +1214,7 @@ function importAll() {
   p.events.forEach((e,i)=>{
     if(addFriend({name:e.name,email:e.email||'',birthday:e.date,relation:e.relation||'Friend',notes:e.notes||'',source:e.source})) {
       count++;
-      const item=document.getElementById(`imp-${p.elId}-${i}`);
-      if(item) item.innerHTML=`<div><div class="import-name">${e.name}</div><div class="import-date">${fmtB(e.date)}</div></div><span class="already-tag" style="color:var(--success);border-color:var(--success);">Imported ✓</span>`;
+      markImported(document.getElementById(`imp-${p.elId}-${i}`), e);
     }
   });
   showStatus(`${count} birthday${count!==1?'s':''} imported!`);
