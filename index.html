@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self' https://api.emailjs.com https://*.supabase.co; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; base-uri 'self'; form-action 'none'; frame-ancestors 'none';" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self' https://api.emailjs.com https://tnl4m7nt94.execute-api.us-west-2.amazonaws.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; base-uri 'self'; form-action 'none'; frame-ancestors 'none';" />
   <meta name="referrer" content="no-referrer" />
   <title>Birthday Email Automator</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -433,6 +433,34 @@
 
     <div id="storage-warning" style="display:none;margin:0 0 14px;padding:12px 14px;border-radius:10px;
          background:#fff4e5;border:1px solid #f0c187;color:#7a4a12;font-size:13px;line-height:1.45;"></div>
+    <p class="stitle">Sync</p>
+    <div class="card">
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Cloud sync</div>
+          <div class="settings-sub" id="sync-dot" style="display:inline-block;padding:2px 0;">Not signed in - this device only</div>
+        </div>
+        <button class="btn btn-outline" id="sync-btn" style="display:none;" onclick="syncNow()">Sync now</button>
+      </div>
+      <div id="signin-box" style="display:none;padding:0 14px 14px;">
+        <div class="settings-sub" style="margin-bottom:8px;">
+          Sign in to keep birthdays on every device and enable the automatic week-ahead reminder.
+        </div>
+        <div style="display:flex;gap:8px;">
+          <input type="password" id="signin-pw" placeholder="Household password" maxlength="200"
+                 style="flex:1;" onkeydown="if(event.key==='Enter')doSignIn();" />
+          <button class="btn btn-primary" onclick="doSignIn()">Sign in</button>
+        </div>
+      </div>
+      <div class="settings-row" id="signout-row">
+        <div>
+          <div class="settings-label">Sign out</div>
+          <div class="settings-sub">Birthdays stay saved on this device</div>
+        </div>
+        <button class="btn-ghost" onclick="signOut()">Sign out</button>
+      </div>
+    </div>
+
     <p class="stitle">Data</p>
     <div class="card">
       <div class="settings-row">
@@ -724,7 +752,7 @@ function renderUpcoming() {
   }).join('');
 }
 
-function removeFriend(i){const fs=friends();fs.splice(i,1);sv(FK,fs);activeFilter='All';renderFriends();renderUpcoming();}
+function removeFriend(i){const fs=friends();fs.splice(i,1);sv(FK,fs);queueSync();activeFilter='All';renderFriends();renderUpcoming();}
 
 // ── Add friend ────────────────────────────────────────────────────────────
 function addFriendFromForm() {
@@ -759,6 +787,7 @@ function addFriend(data) {
   if(fs.find(f=>f.name.toLowerCase()===name.toLowerCase())){showStatus(name+' is already in your list.','warn');return false;}
   fs.push({name,email,birthday,relation,notes,source});
   if(!sv(FK,fs)) return false;
+  queueSync();
   renderFriends(); return true;
 }
 
@@ -911,7 +940,7 @@ function saveNotif() {
   const daysN = parseInt(document.getElementById('notif-days').value, 10);
   if(!isValidEmail(email)){showStatus('Please enter a valid email.','error');return;}
   if(!Number.isFinite(daysN) || daysN < 1 || daysN > 30){showStatus('Days must be between 1 and 30.','error');return;}
-  sv(NK,{email,days:daysN}); showStatus('Settings saved!'); renderFriends(); renderUpcoming();
+  sv(NK,{email,days:daysN}); queueSync(); showStatus('Settings saved!'); renderFriends(); renderUpcoming();
 }
 
 // ── Compose ───────────────────────────────────────────────────────────────
@@ -1344,6 +1373,136 @@ function importAll() {
   if(count) switchTab('friends');
 }
 
+// ── Cloud sync ────────────────────────────────────────────────────────────
+// localStorage stays the source of truth for rendering: the app must keep
+// working offline, and it is what the reminder scheduler was never able to
+// read. The API is a sync layer on top, not a replacement.
+//
+// The endpoint is public in this file on purpose -- it is useless without
+// the password, and CORS is pinned to the Pages origin server-side.
+const API = 'https://tnl4m7nt94.execute-api.us-west-2.amazonaws.com';
+const TK = 'bday_token_v1';
+
+const token    = () => { try { return localStorage.getItem(TK) || ''; } catch { return ''; } };
+const setToken = t => { try { t ? localStorage.setItem(TK, t) : localStorage.removeItem(TK); } catch {} };
+const signedIn = () => !!token();
+
+async function api(path, opts = {}) {
+  const res = await fetch(API + path, {
+    ...opts,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token() ? { Authorization: 'Bearer ' + token() } : {}),
+      ...(opts.headers || {}),
+    },
+  });
+  if (res.status === 401) { setToken(''); updateSyncUI(); throw new Error('signed out'); }
+  if (!res.ok) throw new Error('request failed (' + res.status + ')');
+  return res.json();
+}
+
+async function signIn(password) {
+  const out = await api('/auth', { method: 'POST', body: JSON.stringify({ password }) });
+  setToken(out.token);
+  return out;
+}
+
+function signOut() {
+  setToken('');
+  updateSyncUI();
+  showStatus('Signed out. Birthdays are still saved on this device.');
+}
+
+// Merge, never clobber. Two devices that each added entries offline should
+// end up with the union, not whichever synced last. Name is the identity
+// key -- same rule addFriend() already uses for duplicate detection.
+function mergeFriends(local, remote) {
+  const out = [];
+  const seen = new Map();
+  for (const f of [...remote, ...local]) {
+    if (!f || !f.name) continue;
+    const key = String(f.name).toLowerCase();
+    if (seen.has(key)) {
+      // Prefer whichever copy carries more detail, so a sparse remote row
+      // does not erase notes typed on this device.
+      const prev = seen.get(key);
+      const score = x => (x.email ? 1 : 0) + (x.notes ? 1 : 0) + (x.relation ? 1 : 0);
+      if (score(f) > score(prev)) Object.assign(prev, f, { friendId: prev.friendId || f.friendId });
+      continue;
+    }
+    const copy = { ...f };
+    seen.set(key, copy);
+    out.push(copy);
+  }
+  return out;
+}
+
+let _syncing = false;
+async function syncNow(opts = {}) {
+  if (!signedIn() || _syncing) return;
+  _syncing = true;
+  updateSyncUI('syncing');
+  try {
+    const { friends: remote } = await api('/friends');
+    const merged = mergeFriends(friends(), Array.isArray(remote) ? remote : []);
+    sv(FK, merged);
+    // Reminder settings live server-side too -- the scheduler runs with no
+    // browser open, so it cannot read them from localStorage.
+    const n = notif();
+    await api('/friends', { method: 'PUT', body: JSON.stringify({ friends: merged, notif: n }) });
+    renderFriends(); renderUpcoming();
+    updateSyncUI('ok');
+    if (!opts.quiet) showStatus(`Synced ${merged.length} birthday${merged.length === 1 ? '' : 's'}.`);
+  } catch (e) {
+    updateSyncUI('error');
+    if (!opts.quiet) showStatus('Sync failed: ' + (e.message || 'unknown'), 'error');
+  } finally {
+    _syncing = false;
+  }
+}
+
+// Debounced push so a burst of adds becomes one request rather than ten.
+let _pushTimer = null;
+function queueSync() {
+  if (!signedIn()) return;
+  clearTimeout(_pushTimer);
+  _pushTimer = setTimeout(() => syncNow({ quiet: true }), 1500);
+}
+
+function updateSyncUI(state) {
+  const dot = document.getElementById('sync-dot');
+  const btn = document.getElementById('sync-btn');
+  const box = document.getElementById('signin-box');
+  if (!dot || !btn || !box) return;
+  box.style.display = signedIn() ? 'none' : 'block';
+  const so = document.getElementById('signout-row');
+  if (so) so.style.display = signedIn() ? 'flex' : 'none';
+  btn.style.display = signedIn() ? 'inline-block' : 'none';
+  const map = {
+    syncing: ['#f59e0b', 'Syncing...'],
+    ok:      ['#10b981', 'Synced'],
+    error:   ['#ef4444', 'Sync failed - saved on this device'],
+  };
+  const [color, label] = map[state] || (signedIn() ? ['#10b981', 'Synced'] : ['#94a3b8', 'Not signed in']);
+  dot.style.background = color;
+  dot.title = label;
+  dot.textContent = signedIn() ? label : 'Not signed in - this device only';
+}
+
+async function doSignIn() {
+  const el = document.getElementById('signin-pw');
+  const pw = el.value;
+  if (!pw) { showStatus('Enter the password.', 'error'); return; }
+  try {
+    await signIn(pw);
+    el.value = '';
+    updateSyncUI();
+    await syncNow();
+  } catch (e) {
+    showStatus(e.message === 'signed out' ? 'Wrong password.' : 'Could not sign in: ' + e.message, 'error');
+  }
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────
 // Migration runs before the first render so recovered entries appear on load.
 migrateLegacyFriends();
@@ -1354,6 +1513,8 @@ if(sn.days)  document.getElementById('notif-days').value=sn.days;
 initEJS();
 renderFriends();
 populateRecipientSelect();
+updateSyncUI();
+if(signedIn()) syncNow({quiet:true});
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 </body>
