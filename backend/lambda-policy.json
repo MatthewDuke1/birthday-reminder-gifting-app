@@ -1,0 +1,46 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "FriendsTableOnly",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:Query",
+        "dynamodb:PutItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:BatchWriteItem"
+      ],
+      "Resource": "arn:aws:dynamodb:us-west-2:148238840070:table/bdayapp-friends"
+    },
+    {
+      "Sid": "AppSecretsOnly",
+      "Effect": "Allow",
+      "Action": "ssm:GetParameters",
+      "Resource": [
+        "arn:aws:ssm:us-west-2:148238840070:parameter/bdayapp/password-hash",
+        "arn:aws:ssm:us-west-2:148238840070:parameter/bdayapp/jwt-secret"
+      ]
+    },
+    {
+      "Sid": "DecryptSsmSecureStrings",
+      "Effect": "Allow",
+      "Action": "kms:Decrypt",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": { "kms:ViaService": "ssm.us-west-2.amazonaws.com" }
+      }
+    },
+    {
+      "Sid": "SendRemindersFromVerifiedAddresses",
+      "Effect": "Allow",
+      "Action": [
+        "ses:SendEmail",
+        "ses:SendRawEmail"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": { "ses:FromAddress": "matthewduke0@gmail.com" }
+      }
+    }
+  ]
+}
