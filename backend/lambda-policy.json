@@ -41,7 +41,7 @@
       ],
       "Resource": "*",
       "Condition": {
-        "StringEquals": { "ses:FromAddress": "matthewduke0@gmail.com" }
+        "StringEquals": { "ses:FromAddress": "birthdays@the-duke.org" }
       }
     }
   ]
