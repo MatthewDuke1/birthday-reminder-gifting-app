@@ -32,6 +32,10 @@ Compose & send birthday emails · ICS/CSV import · Gift search · Heads-up remi
 
 ### 3. Push to main → auto-deploys
 
+The workflow at `.github/workflows/deploy-pages.yml` substitutes the `%%EMAILJS_*%%` placeholders at build time, writes the result to `dist/index.html`, and publishes it via `actions/deploy-pages`. If you'd rather keep credentials out of GitHub entirely, skip the secrets — the placeholders are harmless and users can paste their own keys into the app's Settings tab.
+
+Live at **https://matthewduke1.github.io/birthday-reminder-gifting-app/**
+
 ---
 
 ## EmailJS template setup
