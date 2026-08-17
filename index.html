@@ -431,6 +431,8 @@
       <div id="cfg-status" class="send-status"></div>
     </div>
 
+    <div id="storage-warning" style="display:none;margin:0 0 14px;padding:12px 14px;border-radius:10px;
+         background:#fff4e5;border:1px solid #f0c187;color:#7a4a12;font-size:13px;line-height:1.45;"></div>
     <p class="stitle">Data</p>
     <div class="card">
       <div class="settings-row">
@@ -439,6 +441,22 @@
           <div class="settings-sub">Download as CSV for backup</div>
         </div>
         <button class="btn btn-outline" onclick="exportCSV()">Export CSV</button>
+      </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Back up everything</div>
+          <div class="settings-sub">Lossless JSON — keeps notes, relationships and reminder settings</div>
+        </div>
+        <button class="btn btn-outline" onclick="exportBackup()">Download backup</button>
+      </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Restore from backup</div>
+          <div class="settings-sub">Merges into your current list; duplicates are skipped</div>
+        </div>
+        <button class="btn btn-outline" onclick="document.getElementById('restore-file').click()">Restore</button>
+        <input type="file" id="restore-file" accept="application/json,.json" style="display:none"
+               onchange="importBackupFile(this.files[0]); this.value='';">
       </div>
       <div class="settings-row">
         <div>
@@ -491,6 +509,38 @@ const sv  = (k,v) => {
     return false;
   }
 };
+// ── Legacy-key migration ─────────────────────────────────────────────────
+// FK has been bumped v1..v5 across iterations, and every bump orphaned the
+// data saved under the previous key -- it is still in localStorage, just
+// invisible to the app. Sweep every older key once on boot and merge what
+// we find into the current one. Name-insensitive dedupe matches addFriend.
+function migrateLegacyFriends() {
+  const cur = ld(FK);
+  const merged = Array.isArray(cur) ? cur.slice() : [];
+  const seen = new Set(merged.map(f => String(f && f.name || '').toLowerCase()));
+  let recovered = 0;
+  for (const k of Object.keys(localStorage)) {
+    if (!/^bday_friends_v\d+$/.test(k) || k === FK) continue;
+    let old = null;
+    try { old = JSON.parse(localStorage.getItem(k) || 'null'); } catch { continue; }
+    if (!Array.isArray(old)) continue;
+    for (const f of old) {
+      if (!f || !f.name || !isValidBirthday(f.birthday)) continue;
+      const key = String(f.name).toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push({
+        name: clean(f.name, 100), email: clean(f.email, 254), birthday: f.birthday,
+        relation: clean(f.relation, 40), notes: clean(f.notes, 500),
+        source: clean(f.source, 20) || 'recovered',
+      });
+      recovered++;
+    }
+  }
+  if (recovered) { sv(FK, merged); try { showStatus(`Recovered ${recovered} birthday${recovered===1?'':'s'} from an earlier version.`); } catch {} }
+  return recovered;
+}
+
 const friends = () => { const v = ld(FK); return Array.isArray(v) ? v : []; };
 const notif   = () => { const v = ld(NK); return (v && typeof v === 'object') ? v : {}; };
 const cfg     = () => { const v = ld(CK); return (v && typeof v === 'object') ? v : {}; };
@@ -774,6 +824,79 @@ function exportCSV() {
   a.href = URL.createObjectURL(blob);
   a.download='birthdays.csv'; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+// ── Full JSON backup / restore ───────────────────────────────────────────
+// CSV export loses relation/notes/source fidelity on the round trip and has
+// no way back in. This is the lossless pair: everything localStorage holds,
+// restorable on any browser or origin.
+const BACKUP_FORMAT = 'birthday-app-backup-v1';
+
+function exportBackup() {
+  const payload = {
+    format: BACKUP_FORMAT,
+    exportedAt: new Date().toISOString(),
+    friends: friends(),
+    notif: notif(),
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `birthdays-backup-${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  showStatus(`Backed up ${payload.friends.length} birthday${payload.friends.length===1?'':'s'}.`);
+}
+
+// Merge, never replace -- restoring on a browser that already has entries
+// should not silently destroy them. Config keys are deliberately NOT
+// restored: they hold EmailJS credentials and do not belong in a file the
+// user may email around.
+function importBackupFile(file) {
+  if (!file) return;
+  if (file.size > 5 * 1024 * 1024) { showStatus('Backup file too large.', 'error'); return; }
+  const reader = new FileReader();
+  reader.onload = () => {
+    let data = null;
+    try { data = JSON.parse(String(reader.result)); } catch { showStatus('Not a valid backup file.', 'error'); return; }
+    if (!data || data.format !== BACKUP_FORMAT || !Array.isArray(data.friends)) {
+      showStatus('Unrecognised backup format.', 'error'); return;
+    }
+    let added = 0, skipped = 0;
+    for (const f of data.friends) {
+      if (!f || !f.name) { skipped++; continue; }
+      if (addFriend({name:f.name, email:f.email||'', birthday:f.birthday,
+                     relation:f.relation||'Friend', notes:f.notes||'', source:'restore'})) added++;
+      else skipped++;
+    }
+    renderFriends(); renderUpcoming();
+    showStatus(`Restored ${added} birthday${added===1?'':'s'}${skipped?`, skipped ${skipped} (duplicate or invalid)`:''}.`);
+  };
+  reader.onerror = () => showStatus('Could not read that file.', 'error');
+  reader.readAsText(file);
+}
+
+// ── Storage health warning ───────────────────────────────────────────────
+// localStorage is origin-scoped, so file:// and the deployed https:// origin
+// are separate buckets -- the single most common reason entries "disappear".
+// Private windows and "clear site data on close" wipe it silently too.
+function checkStorageHealth() {
+  const host = document.getElementById('storage-warning');
+  if (!host) return;
+  let msg = '';
+  if (location.protocol === 'file:') {
+    msg = 'You are opening this file directly from disk. Birthdays saved here are stored separately from the online version and may not persist. Use the deployed site, and keep a JSON backup.';
+  } else {
+    try {
+      const probe = '__bday_probe__';
+      localStorage.setItem(probe, '1'); localStorage.removeItem(probe);
+    } catch {
+      msg = 'Your browser is blocking local storage, so birthdays cannot be saved. Check private-browsing or site-data settings.';
+    }
+  }
+  if (!msg) { host.style.display = 'none'; return; }
+  host.textContent = msg;
+  host.style.display = 'block';
 }
 
 function clearAllData() {
@@ -1222,6 +1345,9 @@ function importAll() {
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────
+// Migration runs before the first render so recovered entries appear on load.
+migrateLegacyFriends();
+checkStorageHealth();
 const sn=notif();
 if(sn.email) document.getElementById('notif-email').value=sn.email;
 if(sn.days)  document.getElementById('notif-days').value=sn.days;
