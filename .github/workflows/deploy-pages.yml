@@ -26,15 +26,33 @@ jobs:
           EMAILJS_PUBLIC_KEY: ${{ secrets.EMAILJS_PUBLIC_KEY }}
           EMAILJS_SERVICE_ID: ${{ secrets.EMAILJS_SERVICE_ID }}
           EMAILJS_TEMPLATE_ID: ${{ secrets.EMAILJS_TEMPLATE_ID }}
+          # Enables silent sign-in so the app needs no login. This lands in the
+          # published HTML in clear text -- see the note in index.html for why
+          # that is an accepted trade for a household birthday list.
+          HOUSEHOLD_PASSWORD: ${{ secrets.HOUSEHOLD_PASSWORD }}
         run: |
           mkdir -p dist
           sed \
             -e "s|%%EMAILJS_PUBLIC_KEY%%|${EMAILJS_PUBLIC_KEY}|g" \
             -e "s|%%EMAILJS_SERVICE_ID%%|${EMAILJS_SERVICE_ID}|g" \
             -e "s|%%EMAILJS_TEMPLATE_ID%%|${EMAILJS_TEMPLATE_ID}|g" \
+            -e "s|%%HOUSEHOLD_PASSWORD%%|${HOUSEHOLD_PASSWORD}|g" \
             index.html > dist/index.html
           cp -f README.md dist/ 2>/dev/null || true
           touch dist/.nojekyll
+
+      - name: Verify the build
+        run: |
+          # A leftover placeholder means the secret was not set. EmailJS keys
+          # are optional, but a missing household password silently disables
+          # sync -- which is the exact failure this feature exists to remove.
+          if grep -q '%%HOUSEHOLD_PASSWORD%%' dist/index.html; then
+            echo "::warning::HOUSEHOLD_PASSWORD secret is not set. The app will"
+            echo "::warning::require a manual sign-in and birthdays added while"
+            echo "::warning::signed out will NOT trigger reminders."
+          else
+            echo "Auto sign-in enabled."
+          fi
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
