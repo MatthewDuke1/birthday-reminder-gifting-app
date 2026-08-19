@@ -656,7 +656,14 @@ function renderUpcoming() {
   }).join('');
 }
 
-function removeFriend(i){const fs=friends();fs.splice(i,1);sv(FK,fs);queueSync();activeFilter='All';renderFriends();renderUpcoming();}
+function removeFriend(i){
+  const fs=friends();
+  const gone=fs[i];
+  fs.splice(i,1);
+  // Record the deletion before syncing, or the merge pulls them back.
+  if(gone) addTombstone(gone.name);
+  sv(FK,fs);queueSync();activeFilter='All';renderFriends();renderUpcoming();
+}
 
 // ── Add friend ────────────────────────────────────────────────────────────
 function addFriendFromForm() {
@@ -691,6 +698,9 @@ function addFriend(data) {
   if(fs.find(f=>f.name.toLowerCase()===name.toLowerCase())){showStatus(name+' is already in your list.','warn');return false;}
   fs.push({name,email,birthday,relation,notes,source});
   if(!sv(FK,fs)) return false;
+  // Adding someone back overrides an earlier delete, otherwise the next merge
+  // would honour the stale tombstone and drop them again.
+  clearTombstone(name);
   queueSync();
   renderFriends(); return true;
 }
@@ -795,8 +805,12 @@ function checkStorageHealth() {
 
 function clearAllData() {
   if(!confirm('Clear all friends and settings? This cannot be undone.')) return;
+  // Tombstone everyone first. Without this the wipe is local only, and the
+  // next sync pulls the whole list back out of the cloud.
+  friends().forEach(f=>addTombstone(f.name));
   [FK,NK,CK].forEach(k=>localStorage.removeItem(k));
   activeFilter='All'; renderFriends(); renderUpcoming();
+  queueSync();
   showStatus('All data cleared.');
 }
 
@@ -1215,12 +1229,61 @@ function signOut() {
 // Merge, never clobber. Two devices that each added entries offline should
 // end up with the union, not whichever synced last. Name is the identity
 // key -- same rule addFriend() already uses for duplicate detection.
+// Deleting is not the absence of a record -- it is a fact that has to travel.
+//
+// The merge below unions local and remote so two devices that each added
+// someone offline end up with both. That same union used to resurrect anyone
+// you deleted: the row was gone locally but still in the cloud, so the next
+// sync merged it back in and then PUT it, making the delete impossible.
+//
+// A tombstone records the deletion itself. It outranks the remote copy on
+// every merge until it expires, which gives every device time to see it.
+const DK = 'bday_deleted_v1';
+const TOMBSTONE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
+function tombstones() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(DK) || '{}');
+    const now = Date.now();
+    // Drop expired entries on read so the list cannot grow forever.
+    const live = {};
+    for (const [k, ts] of Object.entries(raw)) {
+      if (typeof ts === 'number' && now - ts < TOMBSTONE_TTL_MS) live[k] = ts;
+    }
+    return live;
+  } catch { return {}; }
+}
+
+function addTombstone(name) {
+  const key = String(name || '').toLowerCase().trim();
+  if (!key) return;
+  const t = tombstones();
+  t[key] = Date.now();
+  try { localStorage.setItem(DK, JSON.stringify(t)); } catch {}
+}
+
+// Re-adding someone you previously deleted has to clear the tombstone, or the
+// merge would delete them again on the next sync.
+function clearTombstone(name) {
+  const key = String(name || '').toLowerCase().trim();
+  const t = tombstones();
+  if (key in t) {
+    delete t[key];
+    try { localStorage.setItem(DK, JSON.stringify(t)); } catch {}
+  }
+}
+
 function mergeFriends(local, remote) {
   const out = [];
   const seen = new Map();
+  const dead = tombstones();
+  // A name present locally was deliberately kept, so a stale tombstone must
+  // not remove it -- this covers re-adding someone on another device.
+  const localNames = new Set((local || []).map(f => String(f && f.name || '').toLowerCase()));
   for (const f of [...remote, ...local]) {
     if (!f || !f.name) continue;
     const key = String(f.name).toLowerCase();
+    if (key in dead && !localNames.has(key)) continue;   // deleted here; stay deleted
     if (seen.has(key)) {
       // Prefer whichever copy carries more detail, so a sparse remote row
       // does not erase notes typed on this device.
