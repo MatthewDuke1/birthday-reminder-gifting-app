@@ -61,8 +61,20 @@ cannot read a browser.
 
 One shared household password. The browser posts it to `/auth`, the Lambda
 compares it against a scrypt hash held in SSM, and hands back an HMAC-signed
-token. The static page never holds a secret, so reading the source gets you
-nothing. Eight failed attempts from an IP triggers a lockout.
+token good for 30 days. Eight failed attempts from an IP triggers a lockout.
+
+**You should never see a login.** If `HOUSEHOLD_PASSWORD` is set as a repo
+secret, the build bakes it into the page and the app signs itself in on load.
+Add a birthday and it syncs; there is no setup step.
+
+That does mean the password ships in the published HTML in clear text, readable
+by anyone who views source. It is an accepted trade here: the data is a family
+birthday list, the API is rate limited, and the lockout still applies. Do not
+reuse the pattern for anything that matters more than this does.
+
+Skip the secret and the app falls back to a manual sign-in form. Everything
+still works locally, but birthdays added while signed out never reach the
+reminder.
 
 It is scoped for a household, not a tenant system. There are no user accounts.
 
@@ -79,11 +91,16 @@ GitHub Pages builds from `.github/workflows/deploy-pages.yml`. It substitutes th
 
 1. **Settings → Secrets and variables → Actions**, add:
 
-   | Secret | Example |
-   |---|---|
-   | `EMAILJS_PUBLIC_KEY` | your EmailJS public key |
-   | `EMAILJS_SERVICE_ID` | `service_xxxxxxx` |
-   | `EMAILJS_TEMPLATE_ID` | `template_xxxxxxx` |
+   | Secret | Example | Needed for |
+   |---|---|---|
+   | `HOUSEHOLD_PASSWORD` | your household password | silent sign-in, so reminders work with no setup |
+   | `EMAILJS_PUBLIC_KEY` | your EmailJS public key | the in-app "send heads-up now" button |
+   | `EMAILJS_SERVICE_ID` | `service_xxxxxxx` | same |
+   | `EMAILJS_TEMPLATE_ID` | `template_xxxxxxx` | same |
+
+   `HOUSEHOLD_PASSWORD` is the one that matters. Without it the app requires a
+   manual sign-in, and a birthday added while signed out will not generate a
+   reminder. The build logs a warning if the secret is missing.
 
 2. **Settings → Pages → Source → GitHub Actions**
 3. Push to `main`.

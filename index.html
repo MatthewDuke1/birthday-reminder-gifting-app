@@ -537,7 +537,7 @@ function switchTab(tab) {
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.getElementById('panel-'+tab).classList.add('active');
   if(tab==='notifications') renderUpcoming();
-  if(tab==='friends')       renderFriends();
+  if(tab==='friends')       renderFriends();
 }
 
 function switchImportTab(t) {
@@ -1120,6 +1120,22 @@ function importAll() {
 const API = 'https://tnl4m7nt94.execute-api.us-west-2.amazonaws.com';
 const TK = 'bday_token_v1';
 
+// Baked in at build time from the HOUSEHOLD_PASSWORD secret (see
+// .github/workflows/deploy-pages.yml). When present the app signs itself in on
+// load, so adding a birthday is put-it-in-once with no login step.
+//
+// This is deliberately a shared household secret sitting in a static page, and
+// anyone who views source can read it. That is an accepted trade for a family
+// birthday list: the data is birthdays, the API is rate limited, and eight bad
+// attempts from an IP triggers a lockout. Do not reuse this pattern for
+// anything that matters more than this does.
+//
+// Left unsubstituted (a local checkout, or a deploy with no secret set) the
+// placeholder stays and auto sign-in simply does not run.
+const BUILT_IN_PASSWORD = '%%HOUSEHOLD_PASSWORD%%';
+const hasBuiltInPassword = () =>
+  BUILT_IN_PASSWORD && !BUILT_IN_PASSWORD.startsWith('%%');
+
 const token    = () => { try { return localStorage.getItem(TK) || ''; } catch { return ''; } };
 const setToken = t => { try { t ? localStorage.setItem(TK, t) : localStorage.removeItem(TK); } catch {} };
 const signedIn = () => !!token();
@@ -1144,8 +1160,35 @@ async function signIn(password) {
   return out;
 }
 
+// Sign in without asking, using the build-time password. Returns true if there
+// is a usable token afterwards.
+//
+// _autoSignInTried stops a retry loop: if the built-in password is wrong (say
+// it was rotated server-side and the deploy is stale) we attempt it once per
+// page load and then fall back to the manual form rather than hammering /auth
+// into its own lockout.
+let _autoSignInTried = false;
+async function autoSignIn() {
+  if (signedIn()) return true;
+  if (!hasBuiltInPassword() || _autoSignInTried) return false;
+  _autoSignInTried = true;
+  try {
+    await signIn(BUILT_IN_PASSWORD);
+    updateSyncUI();
+    return signedIn();
+  } catch (_) {
+    // Wrong password, offline, or the API is down. The manual sign-in form is
+    // still there, and everything keeps working locally.
+    updateSyncUI();
+    return false;
+  }
+}
+
+// A user who explicitly signs out should stay signed out, otherwise the next
+// load would silently sign them back in. Remember that for the session.
 function signOut() {
   setToken('');
+  _autoSignInTried = true;
   updateSyncUI();
   showStatus('Signed out. Birthdays are still saved on this device.');
 }
@@ -1176,6 +1219,10 @@ function mergeFriends(local, remote) {
 
 let _syncing = false;
 async function syncNow(opts = {}) {
+  // A 30-day token expires eventually. Rather than silently going offline --
+  // which is how a birthday quietly stops generating reminders -- re-auth from
+  // the built-in password and carry on.
+  if (!signedIn()) await autoSignIn();
   if (!signedIn() || _syncing) return;
   _syncing = true;
   updateSyncUI('syncing');
@@ -1199,9 +1246,13 @@ async function syncNow(opts = {}) {
 }
 
 // Debounced push so a burst of adds becomes one request rather than ten.
+//
+// Note this no longer bails when signed out: syncNow() will auto sign in if the
+// build carries a password. Dropping the push here is exactly how a birthday
+// gets saved locally and never reaches the reminder.
 let _pushTimer = null;
 function queueSync() {
-  if (!signedIn()) return;
+  if (!signedIn() && !hasBuiltInPassword()) return;
   clearTimeout(_pushTimer);
   _pushTimer = setTimeout(() => syncNow({ quiet: true }), 1500);
 }
@@ -1251,7 +1302,12 @@ initEJS();
 renderFriends();
 
 updateSyncUI();
-if(signedIn()) syncNow({quiet:true});
+// Sign in silently if the build carries a password, then sync. Nothing here
+// blocks the UI -- the app is fully usable offline while this resolves.
+(async () => {
+  if (!signedIn()) await autoSignIn();
+  if (signedIn()) syncNow({ quiet: true });
+})();
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 </body>
