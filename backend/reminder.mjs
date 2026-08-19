@@ -69,6 +69,66 @@ const fmtDate = b => {
   });
 };
 
+// ── Gift search ──────────────────────────────────────────────────────────
+// The reminder is the moment you actually want to buy something, so the email
+// carries the shopping links rather than making you open the app to get them.
+//
+// The query is driven by how the person is filed. Notes win when present --
+// "loves pottery" is a far better search than "Sister" -- then the relation,
+// then the bare name as a last resort.
+
+// A relation on its own is a weak search term, so map the common ones to
+// something a store can actually match. Anything unmapped falls through to
+// "<relation> gift", which is still better than the person's name.
+const RELATION_QUERY = {
+  mom: "gifts for mom",
+  dad: "gifts for dad",
+  sister: "gifts for sister",
+  brother: "gifts for brother",
+  grandmother: "gifts for grandma",
+  grandfather: "gifts for grandpa",
+  aunt: "gifts for aunt",
+  uncle: "gifts for uncle",
+  cousin: "birthday gifts for cousin",
+  spouse: "romantic birthday gift",
+  girlfriend: "gifts for girlfriend",
+  boyfriend: "gifts for boyfriend",
+  partner: "romantic birthday gift",
+  "fiancée": "engagement birthday gift",
+  "fiance": "engagement birthday gift",
+  "fiancé": "engagement birthday gift",
+  "best friend": "gifts for best friend",
+  friend: "birthday gifts for friends",
+  colleague: "coworker birthday gift",
+  roommate: "roommate birthday gift",
+  "neighbour": "neighbor gift",
+  neighbor: "neighbor gift",
+};
+
+// Pure: the search phrase for one person.
+export function giftQuery(f) {
+  const notes = (f.notes || "").trim();
+  if (notes) {
+    // Notes are freeform and often a comma list of interests. The first item
+    // is the strongest signal.
+    const first = notes.split(",")[0].trim();
+    if (first) return `${first} gift`;
+  }
+  const rel = (f.relation || "").trim().toLowerCase();
+  if (rel) return RELATION_QUERY[rel] || `${rel} gift`;
+  return `birthday gift for ${(f.name || "").trim()}`.trim();
+}
+
+// Pure: the shopping links for one person. Search URLs, not affiliate links --
+// nothing here tracks the user or earns a commission.
+export function giftLinks(f) {
+  const q = encodeURIComponent(giftQuery(f));
+  return [
+    { label: "Etsy",   url: `https://www.etsy.com/search?q=${q}` },
+    { label: "Amazon", url: `https://www.amazon.com/s?k=${q}` },
+  ];
+}
+
 async function loadFriends() {
   const items = [];
   let ExclusiveStartKey;
@@ -129,6 +189,9 @@ function buildEmail(groups, todayStr) {
       if (age) bits.push(`- turning ${age}`);
       lines.push("  " + bits.join(" "));
       if (f.notes) lines.push(`    note: ${f.notes}`);
+      // Shopping links, so the reminder is actionable from the inbox.
+      lines.push(`    gift ideas ("${giftQuery(f)}"):`);
+      for (const l of giftLinks(f)) lines.push(`      ${l.label}: ${l.url}`);
     }
     lines.push("");
     subjects.push(`${list.length} ${when}`);
