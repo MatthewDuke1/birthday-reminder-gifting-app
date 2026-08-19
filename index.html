@@ -572,9 +572,28 @@ function buildFilterBar() {
 }
 function setFilter(r){activeFilter=r;renderFriends();}
 
+// Keep this in step with giftQuery() in backend/reminder.mjs -- the app and the
+// reminder email should suggest the same thing for the same person.
+//
+// A bare relation is a weak search term, so the common ones map to a phrase a
+// store can match. Notes win when present: "loves pottery" beats "Sister".
+const RELATION_QUERY = {
+  mom:'gifts for mom', dad:'gifts for dad', sister:'gifts for sister', brother:'gifts for brother',
+  grandmother:'gifts for grandma', grandfather:'gifts for grandpa', aunt:'gifts for aunt',
+  uncle:'gifts for uncle', cousin:'birthday gifts for cousin',
+  spouse:'romantic birthday gift', girlfriend:'gifts for girlfriend', boyfriend:'gifts for boyfriend',
+  partner:'romantic birthday gift', 'fiancée':'engagement birthday gift',
+  'fiancé':'engagement birthday gift', fiance:'engagement birthday gift',
+  'best friend':'gifts for best friend', friend:'birthday gifts for friends',
+  colleague:'coworker birthday gift', roommate:'roommate birthday gift',
+  'neighbour':'neighbor gift', neighbor:'neighbor gift',
+};
 function giftQuery(f) {
-  const base=f.notes?f.notes.split(',')[0].trim():(f.relation?f.relation+' gift':f.name);
-  return f.notes?base+' gift':base;
+  const notes=(f.notes||'').trim();
+  if(notes){ const first=notes.split(',')[0].trim(); if(first) return first+' gift'; }
+  const rel=(f.relation||'').trim().toLowerCase();
+  if(rel) return RELATION_QUERY[rel] || rel+' gift';
+  return ('birthday gift for '+(f.name||'').trim()).trim();
 }
 function openGift(site,idx) {
   const f=friends()[idx];
