@@ -1,0 +1,346 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Birthday Email Automator - full backend. Creates the DynamoDB table, both
+  Lambdas, the HTTP API, the daily schedule, and the IAM roles. Everything is
+  serverless and pay-per-request, so an idle stack costs nothing.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: "Required" }
+        Parameters: [HouseholdPassword, FromAddress, ToAddresses]
+      - Label: { default: "Optional" }
+        Parameters: [AllowedOrigin, TimeZone, ReminderHour]
+    ParameterLabels:
+      HouseholdPassword: { default: "Password to protect your birthday list" }
+      FromAddress: { default: "Verified SES sender address" }
+      ToAddresses: { default: "Who receives the reminders" }
+
+Parameters:
+  HouseholdPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    Description: >
+      Used to sign in to the app. Stored as a scrypt hash in SSM, never in
+      plain text on the server.
+
+  FromAddress:
+    Type: String
+    Description: >
+      Reminders are sent from here. MUST already be verified in SES in this
+      region, and should be a domain you control - sending as a @gmail.com
+      address will land in spam because Gmail's DMARC policy rejects it.
+
+  ToAddresses:
+    Type: String
+    Description: Comma-separated list of addresses that receive the reminder.
+
+  AllowedOrigin:
+    Type: String
+    Default: "*"
+    Description: >
+      CORS origin for the API, e.g. https://yourname.github.io. Leave as * only
+      while testing.
+
+  TimeZone:
+    Type: String
+    Default: America/Chicago
+    Description: '"7 days before" is counted in this timezone, not UTC.'
+
+  ReminderHour:
+    Type: Number
+    Default: 8
+    MinValue: 0
+    MaxValue: 23
+    Description: Hour of day (0-23, in TimeZone) to send the reminder.
+
+Resources:
+  # ── Storage ────────────────────────────────────────────────────────────
+  FriendsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-friends"
+      # On-demand: no capacity to plan, and a household list bills as ~nothing.
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: ownerId,  AttributeType: S }
+        - { AttributeName: friendId, AttributeType: S }
+      KeySchema:
+        - { AttributeName: ownerId,  KeyType: HASH }
+        - { AttributeName: friendId, KeyType: RANGE }
+      # Sweeps the "already sent this reminder" markers after ~13 months.
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  # ── Secrets ────────────────────────────────────────────────────────────
+  # The password hash and the token-signing secret are written by a custom
+  # resource so the plain password never lands in the template output.
+  SecretsWriterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: WriteAppSecrets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [ssm:PutParameter, ssm:DeleteParameter]
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AWS::StackName}/*"
+
+  SecretsWriter:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Timeout: 30
+      Role: !GetAtt SecretsWriterRole.Arn
+      Code:
+        ZipFile: |
+          const { SSMClient, PutParameterCommand, DeleteParameterCommand } = require("@aws-sdk/client-ssm");
+          const crypto = require("crypto");
+          const https = require("https");
+          const url = require("url");
+
+          function respond(event, context, status, data = {}) {
+            return new Promise((resolve) => {
+              const body = JSON.stringify({
+                Status: status, Reason: "see CloudWatch " + context.logStreamName,
+                PhysicalResourceId: event.LogicalResourceId, StackId: event.StackId,
+                RequestId: event.RequestId, LogicalResourceId: event.LogicalResourceId, Data: data,
+              });
+              const p = url.parse(event.ResponseURL);
+              const req = https.request({
+                hostname: p.hostname, path: p.path, method: "PUT",
+                headers: { "content-type": "", "content-length": Buffer.byteLength(body) },
+              }, () => resolve());
+              req.on("error", () => resolve());
+              req.write(body); req.end();
+            });
+          }
+
+          exports.handler = async (event, context) => {
+            const ssm = new SSMClient({});
+            const prefix = "/" + event.ResourceProperties.StackName;
+            try {
+              if (event.RequestType === "Delete") {
+                for (const n of ["password-hash", "jwt-secret"]) {
+                  try { await ssm.send(new DeleteParameterCommand({ Name: prefix + "/" + n })); } catch (_) {}
+                }
+                return respond(event, context, "SUCCESS");
+              }
+              const pw = event.ResourceProperties.Password;
+              const salt = crypto.randomBytes(16).toString("hex");
+              const hash = crypto.scryptSync(pw, salt, 64).toString("hex");
+              await ssm.send(new PutParameterCommand({
+                Name: prefix + "/password-hash", Type: "SecureString",
+                Value: `scrypt$${salt}$${hash}`, Overwrite: true,
+              }));
+              await ssm.send(new PutParameterCommand({
+                Name: prefix + "/jwt-secret", Type: "SecureString",
+                Value: crypto.randomBytes(32).toString("hex"), Overwrite: true,
+              }));
+              return respond(event, context, "SUCCESS");
+            } catch (e) {
+              console.error(e);
+              return respond(event, context, "FAILED");
+            }
+          };
+
+  AppSecrets:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken: !GetAtt SecretsWriter.Arn
+      StackName: !Ref AWS::StackName
+      Password: !Ref HouseholdPassword
+
+  # ── Shared Lambda role ─────────────────────────────────────────────────
+  AppRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: AppAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # Scoped to this stack's table only.
+              - Sid: FriendsTableOnly
+                Effect: Allow
+                Action: [dynamodb:Query, dynamodb:GetItem, dynamodb:PutItem,
+                         dynamodb:UpdateItem, dynamodb:DeleteItem, dynamodb:BatchWriteItem]
+                Resource: !GetAtt FriendsTable.Arn
+              - Sid: AppSecretsOnly
+                Effect: Allow
+                Action: ssm:GetParameters
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AWS::StackName}/*"
+              - Sid: DecryptSsmSecureStrings
+                Effect: Allow
+                Action: kms:Decrypt
+                Resource: !Sub "arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/*"
+                Condition:
+                  StringEquals:
+                    kms:ViaService: !Sub "ssm.${AWS::Region}.amazonaws.com"
+              - Sid: SendRemindersOnly
+                Effect: Allow
+                Action: [ses:SendEmail, ses:SendRawEmail]
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    ses:FromAddress: !Ref FromAddress
+
+  # ── Functions ──────────────────────────────────────────────────────────
+  # Code is loaded from the published bundle so the template stays readable.
+  # See deploy/README.md for how to point these at your own build.
+  ApiFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-api"
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Timeout: 15
+      MemorySize: 256
+      Role: !GetAtt AppRole.Arn
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref FriendsTable
+          ALLOWED_ORIGIN: !Ref AllowedOrigin
+          SSM_PREFIX: !Sub "/${AWS::StackName}"
+      Code:
+        ZipFile: |
+          export const handler = async () => ({
+            statusCode: 500,
+            body: JSON.stringify({
+              error: "Placeholder. Deploy the real bundle - see deploy/README.md step 3.",
+            }),
+          });
+
+  ReminderFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-reminder"
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Timeout: 60
+      MemorySize: 256
+      Role: !GetAtt AppRole.Arn
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref FriendsTable
+          FROM_ADDRESS: !Ref FromAddress
+          TO_ADDRESSES: !Ref ToAddresses
+          TZ_NAME: !Ref TimeZone
+      Code:
+        ZipFile: |
+          export const handler = async () => ({
+            statusCode: 500,
+            body: JSON.stringify({
+              error: "Placeholder. Deploy the real bundle - see deploy/README.md step 3.",
+            }),
+          });
+
+  # ── HTTP API ───────────────────────────────────────────────────────────
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub "${AWS::StackName}-api"
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins: [!Ref AllowedOrigin]
+        AllowMethods: [GET, PUT, POST, OPTIONS]
+        AllowHeaders: [content-type, authorization]
+        MaxAge: 3600
+
+  ApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt ApiFunction.Arn
+      PayloadFormatVersion: "2.0"
+
+  ApiRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: $default
+      Target: !Sub "integrations/${ApiIntegration}"
+
+  ApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: $default
+      AutoDeploy: true
+
+  ApiInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt ApiFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*"
+
+  # ── Daily schedule ─────────────────────────────────────────────────────
+  SchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: scheduler.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeReminder
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt ReminderFunction.Arn
+
+  DailyReminder:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: !Sub "${AWS::StackName}-daily-reminder"
+      Description: Runs the birthday reminder once a day.
+      FlexibleTimeWindow: { Mode: "OFF" }
+      ScheduleExpression: !Sub "cron(0 ${ReminderHour} * * ? *)"
+      ScheduleExpressionTimezone: !Ref TimeZone
+      Target:
+        Arn: !GetAtt ReminderFunction.Arn
+        RoleArn: !GetAtt SchedulerRole.Arn
+
+Outputs:
+  ApiEndpoint:
+    Description: Put this in index.html as the API constant.
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+  TableName:
+    Value: !Ref FriendsTable
+  ReminderFunctionName:
+    Description: Deploy your reminder bundle here.
+    Value: !Ref ReminderFunction
+  ApiFunctionName:
+    Description: Deploy your API bundle here.
+    Value: !Ref ApiFunction
+  NextStep:
+    Value: "Upload the two Lambda bundles - see deploy/README.md step 3."
