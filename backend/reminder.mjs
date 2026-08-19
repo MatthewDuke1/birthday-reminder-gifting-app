@@ -106,17 +106,35 @@ const RELATION_QUERY = {
 };
 
 // Pure: the search phrase for one person.
+// Words that mean the note is about the RECORD, not about the person. A note
+// like "delete this later" or "check with mom re: address" is a reminder to
+// self, and pasting it into a store search produces nonsense.
+const NOTE_NOISE = /\b(delete|remove|test|testing|todo|to-do|fixme|temp|temporary|dupe|duplicate|placeholder|ignore|check|verify|confirm|update|fix|wrong|unsure|not sure|maybe|tbd|n\/a)\b/i;
+
+// A usable gift hint is a short phrase about the person's interests. Anything
+// long enough to be a sentence is almost certainly context, not a search term.
+function giftHintFromNotes(notes) {
+  const raw = (notes || "").trim();
+  if (!raw) return "";
+  const first = raw.split(/[,;\n]/)[0].trim();
+  if (!first) return "";
+  if (NOTE_NOISE.test(first)) return "";           // a note to self, not an interest
+  if (first.split(/\s+/).length > 4) return "";    // a sentence, not a search term
+  if (first.length > 40) return "";
+  if (!/[a-z]/i.test(first)) return "";            // no letters, nothing to search
+  return first;
+}
+
 export function giftQuery(f) {
-  const notes = (f.notes || "").trim();
-  if (notes) {
-    // Notes are freeform and often a comma list of interests. The first item
-    // is the strongest signal.
-    const first = notes.split(",")[0].trim();
-    if (first) return `${first} gift`;
-  }
+  // Notes win only when they actually read like an interest. They are freeform,
+  // so plenty of them are reminders to self -- "Delete this record later" became
+  // the search "Delete this record later gift", which is worse than useless.
+  const hint = giftHintFromNotes(f.notes);
+  if (hint) return `${hint} gift`;
+
   const rel = (f.relation || "").trim().toLowerCase();
   if (rel) return RELATION_QUERY[rel] || `${rel} gift`;
-  return `birthday gift for ${(f.name || "").trim()}`.trim();
+  return "birthday gift ideas";
 }
 
 // Pure: the shopping links for one person. Search URLs, not affiliate links --

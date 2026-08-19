@@ -588,12 +588,27 @@ const RELATION_QUERY = {
   colleague:'coworker birthday gift', roommate:'roommate birthday gift',
   'neighbour':'neighbor gift', neighbor:'neighbor gift',
 };
+// Notes are freeform, so plenty of them are reminders to self rather than
+// interests. "Delete this record later" became the search "Delete this record
+// later gift". A note only drives the search when it reads like an interest.
+const NOTE_NOISE=/\b(delete|remove|test|testing|todo|to-do|fixme|temp|temporary|dupe|duplicate|placeholder|ignore|check|verify|confirm|update|fix|wrong|unsure|not sure|maybe|tbd|n\/a)\b/i;
+function giftHintFromNotes(notes){
+  const raw=(notes||'').trim();
+  if(!raw) return '';
+  const first=raw.split(/[,;\n]/)[0].trim();
+  if(!first) return '';
+  if(NOTE_NOISE.test(first)) return '';          // note to self, not an interest
+  if(first.split(/\s+/).length>4) return '';     // a sentence, not a search term
+  if(first.length>40) return '';
+  if(!/[a-z]/i.test(first)) return '';
+  return first;
+}
 function giftQuery(f) {
-  const notes=(f.notes||'').trim();
-  if(notes){ const first=notes.split(',')[0].trim(); if(first) return first+' gift'; }
+  const hint=giftHintFromNotes(f.notes);
+  if(hint) return hint+' gift';
   const rel=(f.relation||'').trim().toLowerCase();
   if(rel) return RELATION_QUERY[rel] || rel+' gift';
-  return ('birthday gift for '+(f.name||'').trim()).trim();
+  return 'birthday gift ideas';
 }
 function openGift(site,idx) {
   const f=friends()[idx];
