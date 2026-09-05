@@ -87,15 +87,29 @@ aws cloudformation deploy \
       FromAddress='birthdays@yourdomain.com' \
       ToAddresses='you@example.com' \
       AllowedOrigin='https://yourname.github.io' \
+      AppUrl='https://yourname.github.io/birthday-reminder-gifting-app/' \
       TimeZone='America/Chicago' \
       ReminderHour=8
 ```
 
+`AllowedOrigin` is now required, and must be one exact origin. It used to
+default to `*`, which meant any site a signed-in user happened to visit could
+call your API from their browser with their stored token attached.
+
 Or open the CloudFormation console, choose **Create stack → upload a template
 file**, and fill in the same values.
 
-The password is stored as a scrypt hash in SSM Parameter Store. It is never
-written to the template, the stack outputs, or any log.
+Only the scrypt hash of the password ever reaches the running app, held in SSM
+Parameter Store as a SecureString. It is not written to the stack outputs or to
+any log.
+
+One caveat worth stating plainly, because the previous wording here was too
+generous: CloudFormation keeps the parameter values you passed in alongside the
+stack, so the plain password can be read back by anyone in the account holding
+`cloudformation:DescribeStackResource` on it. `NoEcho` hides the value in the
+console, not from the API. Treat it as an account-level secret, and rotate it by
+re-running the deploy with a new `HouseholdPassword` - the custom resource
+rewrites the hash in place.
 
 ### 3. Upload the function code
 

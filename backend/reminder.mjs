@@ -14,27 +14,52 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, QueryCommand, PutCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
 
-const REGION = process.env.AWS_REGION || "us-west-2";
-const TABLE = process.env.TABLE_NAME || "bdayapp-friends";
-const FROM = process.env.FROM_ADDRESS || "matthewduke0@gmail.com";
-const TO = (process.env.TO_ADDRESSES || "matthewduke0@gmail.com,msb9519@gmail.com")
-  .split(",").map(s => s.trim()).filter(Boolean);
+// Config is resolved lazily so the pure helpers below stay importable and
+// testable without a configured environment.
+//
+// The defaults that used to sit here were this repo author's own table, own
+// sender and own inbox. In someone else's account that is not a convenience:
+// a half-configured stack would mail another household's birthdays to a
+// stranger. Missing config is now a loud failure instead of a silent one.
+function required(name) {
+  const v = process.env[name];
+  if (!v) throw new Error("missing required env var " + name);
+  return v;
+}
 
-// Reminders are meaningful in local time -- "7 days before" should mean
-// 7 calendar days where the household lives, not in UTC.
-const TZ = process.env.TZ_NAME || "America/Chicago";
+const REGION = process.env.AWS_REGION || "us-east-1";
+
+function config() {
+  const to = required("TO_ADDRESSES").split(",").map(s => s.trim()).filter(Boolean);
+  if (!to.length) throw new Error("TO_ADDRESSES is set but empty");
+  return {
+    table: required("TABLE_NAME"),
+    from: required("FROM_ADDRESS"),
+    to,
+    // Reminders are meaningful in local time -- "7 days before" should mean
+    // 7 calendar days where the household lives, not in UTC.
+    tz: process.env.TZ_NAME || "America/Chicago",
+    // Footer link. No default: pointing every deployment back at the author's
+    // Pages site is both wrong and a quiet outbound signal.
+    appUrl: process.env.APP_URL || "",
+  };
+}
 
 const OWNER = "household";
 const SENT_PARTITION = "__sent";
 const OFFSETS = [7, 1, 0];
+// Matching only cares that an offset is in the set. Reading order is a
+// separate concern: the birthday that is today belongs at the top of the mail,
+// not underneath the one a week out.
+const DISPLAY_OFFSETS = [0, 1, 7];
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }));
 const ses = new SESClient({ region: REGION });
 
 // "Today" in the household's timezone, as YYYY-MM-DD.
-function localToday() {
+function localToday(tz) {
   const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit",
+    timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
   }).formatToParts(new Date());
   const get = t => parts.find(p => p.type === t).value;
   return `${get("year")}-${get("month")}-${get("day")}`;
@@ -147,12 +172,12 @@ export function giftLinks(f) {
   ];
 }
 
-async function loadFriends() {
+async function loadFriends(table) {
   const items = [];
   let ExclusiveStartKey;
   do {
     const page = await ddb.send(new QueryCommand({
-      TableName: TABLE,
+      TableName: table,
       KeyConditionExpression: "ownerId = :o",
       ExpressionAttributeValues: { ":o": OWNER },
       ExclusiveStartKey,
@@ -168,10 +193,10 @@ async function loadFriends() {
 // second identical email.
 const markerId = (friendId, year, offset) => `${friendId}#${year}#${offset}`;
 
-async function alreadySent(id) {
+async function alreadySent(table, id) {
   try {
     const out = await ddb.send(new GetCommand({
-      TableName: TABLE, Key: { ownerId: SENT_PARTITION, friendId: id },
+      TableName: table, Key: { ownerId: SENT_PARTITION, friendId: id },
     }));
     return !!out.Item;
   } catch (e) {
@@ -182,22 +207,136 @@ async function alreadySent(id) {
   }
 }
 
-async function markSent(id) {
+async function markSent(table, id) {
   const ttl = Math.floor(Date.now() / 1000) + 400 * 24 * 60 * 60;
   await ddb.send(new PutCommand({
-    TableName: TABLE,
+    TableName: table,
     Item: { ownerId: SENT_PARTITION, friendId: id, sentAt: new Date().toISOString(), expiresAt: ttl },
   }));
 }
 
-function buildEmail(groups, todayStr) {
+// ── Email rendering ──────────────────────────────────────────────────────
+// Names, relations and notes are typed by a person and stored verbatim, so
+// every one of them is escaped before it goes near the HTML part. A friend
+// named `<img src=x onerror=...>` is a rendering bug at best in a mail client
+// that runs it, and a phishing surface at worst.
+const escHtml = v => String(v == null ? "" : v)
+  .replace(/&/g, "&amp;")
+  .replace(/</g, "&lt;")
+  .replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;")
+  .replace(/'/g, "&#39;");
+
+// Only http(s) URLs are ever emitted as hrefs. giftLinks builds these from
+// encodeURIComponent, so this is a belt-and-braces guard against a javascript:
+// or data: URL ever reaching an anchor.
+const safeUrl = u => /^https?:\/\//i.test(String(u)) ? String(u) : "";
+
+const WHEN_LABEL = { 0: "Today", 1: "Tomorrow" };
+const whenLabel = o => WHEN_LABEL[o] || `In ${o} days`;
+const whenPhrase = o => o === 0 ? "today" : o === 1 ? "tomorrow" : `in ${o} days`;
+
+// Palette. Kept as constants because every one of these is repeated inline --
+// mail clients strip <style> blocks often enough that inline is the only
+// reliable option, and Outlook's renderer ignores most of a stylesheet anyway.
+const C = {
+  ink: "#1a1a1a", ink2: "#57534e", ink3: "#8a8580",
+  line: "#e7e2dc", card: "#ffffff", page: "#f5f2ee",
+  accent: "#b4532a", accentSoft: "#fdf5f0",
+};
+
+function personRow(f, todayStr) {
+  const age = ordinalAge(f.birthday, todayStr);
+  const name = escHtml(f.name);
+  const rel = f.relation ? escHtml(f.relation) : "";
+  const date = escHtml(fmtDate(f.birthday));
+  const query = escHtml(giftQuery(f));
+
+  const meta = [date];
+  if (age) meta.push(`turning ${age}`);
+
+  const buttons = giftLinks(f)
+    .map(l => safeUrl(l.url) ? `<a href="${escHtml(safeUrl(l.url))}" style="display:inline-block;padding:8px 14px;margin:0 8px 0 0;background:${C.accentSoft};border:1px solid ${C.line};border-radius:6px;color:${C.accent};font:600 13px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;text-decoration:none;">${escHtml(l.label)} &rarr;</a>` : "")
+    .join("");
+
+  return `
+      <tr>
+        <td style="padding:16px 20px;border-top:1px solid ${C.line};">
+          <div style="font:600 16px/1.3 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:${C.ink};">
+            ${name}${rel ? ` <span style="font:400 13px/1.3 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:${C.ink3};">${rel}</span>` : ""}
+          </div>
+          <div style="margin-top:3px;font:400 13px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:${C.ink2};">
+            ${escHtml(meta.join(" \u00b7 "))}
+          </div>
+          ${f.notes ? `<div style="margin-top:8px;padding:8px 10px;background:${C.page};border-radius:5px;font:400 13px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:${C.ink2};">${escHtml(f.notes)}</div>` : ""}
+          <div style="margin-top:12px;">
+            <div style="margin-bottom:7px;font:400 11px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:${C.ink3};letter-spacing:.06em;text-transform:uppercase;">Gift ideas for &ldquo;${query}&rdquo;</div>
+            ${buttons}
+          </div>
+        </td>
+      </tr>`;
+}
+
+function buildHtml(groups, todayStr, appUrl, headline) {
+  const sections = DISPLAY_OFFSETS.map(offset => {
+    const list = groups[offset];
+    if (!list || !list.length) return "";
+    const rows = list.map(f => personRow(f, todayStr)).join("");
+    return `
+      <tr>
+        <td style="padding:20px 20px 4px;">
+          <span style="display:inline-block;padding:4px 10px;border-radius:2em;background:${offset === 0 ? C.accent : C.page};color:${offset === 0 ? "#ffffff" : C.ink2};font:600 11px/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;letter-spacing:.07em;text-transform:uppercase;">${escHtml(whenLabel(offset))}</span>
+        </td>
+      </tr>${rows}`;
+  }).join("");
+
+  const footer = appUrl && safeUrl(appUrl)
+    ? `<a href="${escHtml(safeUrl(appUrl))}" style="color:${C.ink3};text-decoration:underline;">Open your birthday list</a>`
+    : "Sent by your own birthday reminder stack.";
+
+  // A table-based, fixed-width layout with inline styles: the only thing that
+  // survives Outlook, Gmail and Apple Mail without three separate hacks.
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<meta name="color-scheme" content="light" />
+<title>${escHtml(headline)}</title>
+</head>
+<body style="margin:0;padding:0;background:${C.page};">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;">${escHtml(headline)}</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${C.page};">
+    <tr>
+      <td align="center" style="padding:28px 12px;">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background:${C.card};border:1px solid ${C.line};border-radius:10px;overflow:hidden;">
+          <tr>
+            <td style="padding:22px 20px 18px;">
+              <div style="font:400 11px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:${C.ink3};letter-spacing:.1em;text-transform:uppercase;">Birthday reminder</div>
+              <div style="margin-top:7px;font:600 20px/1.3 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:${C.ink};">${escHtml(headline)}</div>
+            </td>
+          </tr>${sections}
+          <tr>
+            <td style="padding:16px 20px 20px;border-top:1px solid ${C.line};font:400 12px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:${C.ink3};">
+              ${footer}
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
+function buildEmail(groups, todayStr, appUrl) {
   const lines = [];
   const subjects = [];
 
-  for (const offset of OFFSETS) {
+  for (const offset of DISPLAY_OFFSETS) {
     const list = groups[offset];
     if (!list || !list.length) continue;
-    const when = offset === 0 ? "today" : offset === 1 ? "tomorrow" : `in ${offset} days`;
+    const when = whenPhrase(offset);
     lines.push(offset === 0 ? "Birthdays today:" : `Birthdays ${when}:`);
     for (const f of list) {
       const age = ordinalAge(f.birthday, todayStr);
@@ -215,21 +354,34 @@ function buildEmail(groups, todayStr) {
     subjects.push(`${list.length} ${when}`);
   }
 
-  const allNames = OFFSETS.flatMap(o => (groups[o] || []).map(f => f.name));
+  const allNames = DISPLAY_OFFSETS.flatMap(o => (groups[o] || []).map(f => f.name));
   const subject = allNames.length === 1
     ? `Birthday reminder: ${allNames[0]}`
     : `Birthday reminder: ${subjects.join(", ")}`;
 
-  lines.push("---");
-  lines.push("https://matthewduke1.github.io/birthday-reminder-gifting-app/");
+  // Headline for the HTML part: says the same thing as the subject, but reads
+  // as a sentence rather than a summary line.
+  const headline = allNames.length === 1
+    ? `${allNames[0]} has a birthday ${whenPhrase(DISPLAY_OFFSETS.find(o => (groups[o] || []).length))}`
+    : `${allNames.length} birthdays coming up`;
 
-  return { subject: subject.slice(0, 200), body: lines.join("\n") };
+  if (appUrl) {
+    lines.push("---");
+    lines.push(appUrl);
+  }
+
+  return {
+    subject: subject.slice(0, 200),
+    body: lines.join("\n"),
+    html: buildHtml(groups, todayStr, appUrl, headline),
+  };
 }
 
 export const handler = async () => {
-  const todayStr = localToday();
+  const cfg = config();
+  const todayStr = localToday(cfg.tz);
   const year = Number(todayStr.slice(0, 4));
-  const friends = await loadFriends();
+  const friends = await loadFriends(cfg.table);
 
   const groups = {};
   const toMark = [];
@@ -239,7 +391,7 @@ export const handler = async () => {
     const d = daysUntil(f.birthday, todayStr);
     if (!OFFSETS.includes(d)) continue;
     const id = markerId(f.friendId, year, d);
-    if (await alreadySent(id)) continue;
+    if (await alreadySent(cfg.table, id)) continue;
     (groups[d] ||= []).push(f);
     toMark.push(id);
   }
@@ -248,20 +400,23 @@ export const handler = async () => {
     return { statusCode: 200, body: JSON.stringify({ sent: 0, date: todayStr, reason: "nothing due" }) };
   }
 
-  const { subject, body } = buildEmail(groups, todayStr);
+  const { subject, body, html } = buildEmail(groups, todayStr, cfg.appUrl);
 
   await ses.send(new SendEmailCommand({
-    Source: FROM,
-    Destination: { ToAddresses: TO },
+    Source: cfg.from,
+    Destination: { ToAddresses: cfg.to },
     Message: {
       Subject: { Data: subject, Charset: "UTF-8" },
-      Body: { Text: { Data: body, Charset: "UTF-8" } },
+      Body: {
+        Text: { Data: body, Charset: "UTF-8" },
+        Html: { Data: html, Charset: "UTF-8" },
+      },
     },
   }));
 
   // Only mark after SES accepts. If the send throws, nothing is marked and
   // tomorrow's run retries -- the window is what makes that recovery work.
-  for (const id of toMark) await markSent(id);
+  for (const id of toMark) await markSent(cfg.table, id);
 
   return { statusCode: 200, body: JSON.stringify({ sent: toMark.length, date: todayStr, subject }) };
 };

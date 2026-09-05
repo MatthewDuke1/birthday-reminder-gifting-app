@@ -1,0 +1,6 @@
+# The sanitiser in index.mjs and selftest.mjs used to be written with raw
+# control bytes in the character class, which made git classify both files as
+# binary and hide every diff in them. The bytes are now escape sequences, but
+# the old blobs still contain NULs, so force a textual diff either way.
+*.mjs diff
+*.yaml diff
