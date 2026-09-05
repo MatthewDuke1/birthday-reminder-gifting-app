@@ -74,7 +74,51 @@ New SES accounts are in sandbox mode, which only allows sending to verified
 addresses — fine for a household, since you are emailing yourself. Request
 production access if you need more.
 
-### 2. Create the stack
+### 2. Deploy
+
+```bash
+deploy/deploy.sh \
+  --password 'something-long-and-unguessable' \
+  --from birthdays@yourdomain.com \
+  --to you@example.com \
+  --origin https://yourname.github.io
+```
+
+That is the whole backend. The script packages both functions, uploads them to
+a private code bucket it creates on first run, and creates the stack. It prints
+your API endpoint at the end.
+
+Re-run the same command to deploy a change. Anything you leave off keeps its
+current value, so updating just the send hour is `--hour 7` on its own. Bundle
+keys are content-addressed, so CloudFormation actually picks up edited code
+instead of leaving the old version running.
+
+It needs the AWS CLI. For zipping it uses whichever of `zip`, `python3`,
+`python` or `powershell` you already have.
+
+Useful extras: `--region`, `--stack`, `--timezone`, `--hour`, `--retention`,
+`--app-url` (the link at the bottom of the reminder). `--help` lists them all.
+
+`--origin` is required and must be one exact origin. It used to default to
+`*`, which meant any site a signed-in user happened to visit could call your
+API from their browser with their stored token attached.
+
+Only the scrypt hash of the password ever reaches the running app, held in SSM
+Parameter Store as a SecureString. It is not written to the stack outputs or to
+any log.
+
+One caveat worth stating plainly, because the previous wording here was too
+generous: CloudFormation keeps the parameter values you passed in alongside the
+stack, so the plain password can be read back by anyone in the account holding
+`cloudformation:DescribeStackResource` on it. `NoEcho` hides the value in the
+console, not from the API. Treat it as an account-level secret, and rotate it by
+re-running the deploy with a new `--password`.
+
+#### Or by hand
+
+The template stands on its own if you would rather not run a script. Deploy it
+with no `CodeBucket` and both functions come up as a placeholder that returns a
+clear error, so the stack is valid before any code exists:
 
 ```bash
 aws cloudformation deploy \
@@ -86,63 +130,35 @@ aws cloudformation deploy \
       HouseholdPassword='pick-something-long' \
       FromAddress='birthdays@yourdomain.com' \
       ToAddresses='you@example.com' \
-      AllowedOrigin='https://yourname.github.io' \
-      AppUrl='https://yourname.github.io/birthday-reminder-gifting-app/' \
-      TimeZone='America/Chicago' \
-      ReminderHour=8
+      AllowedOrigin='https://yourname.github.io'
 ```
 
-`AllowedOrigin` is now required, and must be one exact origin. It used to
-default to `*`, which meant any site a signed-in user happened to visit could
-call your API from their browser with their stored token attached.
+Then either push code with `aws lambda update-function-code`, or re-deploy
+passing `CodeBucket`, `ApiCodeKey` and `ReminderCodeKey`. The console works
+too: **Create stack → upload a template file**.
 
-Or open the CloudFormation console, choose **Create stack → upload a template
-file**, and fill in the same values.
+### 3. Point the front end at your API
 
-Only the scrypt hash of the password ever reaches the running app, held in SSM
-Parameter Store as a SecureString. It is not written to the stack outputs or to
-any log.
+Take the endpoint the script printed (`ApiEndpoint` in the stack outputs) and
+give it to the build as `API_ENDPOINT`. On GitHub Pages that is a repository
+secret of that name, which the included workflow reads:
 
-One caveat worth stating plainly, because the previous wording here was too
-generous: CloudFormation keeps the parameter values you passed in alongside the
-stack, so the plain password can be read back by anyone in the account holding
-`cloudformation:DescribeStackResource` on it. `NoEcho` hides the value in the
-console, not from the API. Treat it as an account-level secret, and rotate it by
-re-running the deploy with a new `HouseholdPassword` - the custom resource
-rewrites the hash in place.
+**Settings → Secrets and variables → Actions → New repository secret**
 
-### 3. Upload the function code
+| Secret | Value |
+|---|---|
+| `API_ENDPOINT` | the `ApiEndpoint` output, e.g. `https://xxxxxxxx.execute-api.us-west-2.amazonaws.com` |
+| `HOUSEHOLD_PASSWORD` | the same password you deployed with — optional, enables the no-login flow |
 
-The template creates both Lambdas with a placeholder that returns a clear error,
-so the stack is valid before you have built anything. Push the real code:
+The endpoint is no longer hard-coded in `index.html`. Without `API_ENDPOINT`
+the app still runs, but local-only: it stores birthdays in the browser, does
+not sync, and no reminder will fire. The build logs a warning saying so.
 
-```bash
-# API
-cp backend/index.mjs index.mjs && zip -q api.zip index.mjs && rm index.mjs
-aws lambda update-function-code --function-name bdayapp-api \
-  --zip-file fileb://api.zip --region us-west-2
+Before setting `HOUSEHOLD_PASSWORD`, read the note in the root README: it is
+baked into the published HTML in clear text, so on a public site anyone can
+read it with view-source.
 
-# Reminder
-cp backend/reminder.mjs index.mjs && zip -q reminder.zip index.mjs && rm index.mjs
-aws lambda update-function-code --function-name bdayapp-reminder \
-  --zip-file fileb://reminder.zip --region us-west-2
-```
-
-Both files import only the AWS SDK, which the Node 20 runtime already provides,
-so there is no `npm install` and no bundler.
-
-### 4. Point the front end at your API
-
-Take `ApiEndpoint` from the stack outputs and set it in `index.html`:
-
-```js
-const API = 'https://xxxxxxxx.execute-api.us-west-2.amazonaws.com';
-```
-
-Then deploy `index.html` anywhere static. The included GitHub Actions workflow
-publishes it to Pages and bakes in your secrets; see the root README.
-
-### 5. Check it
+### 4. Send a test
 
 ```bash
 aws lambda invoke --function-name bdayapp-reminder \
@@ -160,6 +176,14 @@ aws cloudformation delete-stack --stack-name bdayapp --region us-west-2
 
 That deletes everything the template made, including the table and its data.
 Export a backup from the app first if you want to keep the list.
+
+The code bucket is created by the deploy script rather than by the template, so
+the stack does not own it and will not remove it. Delete it yourself once the
+stack is gone:
+
+```bash
+aws s3 rb "s3://bdayapp-code-$(aws sts get-caller-identity --query Account --output text)-us-west-2" --force
+```
 
 ## What the template does not do
 

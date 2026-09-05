@@ -9,6 +9,8 @@ Metadata:
     ParameterGroups:
       - Label: { default: "Required" }
         Parameters: [HouseholdPassword, FromAddress, ToAddresses]
+      - Label: { default: "Function code" }
+        Parameters: [CodeBucket, ApiCodeKey, ReminderCodeKey]
       - Label: { default: "Optional" }
         Parameters: [AppUrl, TimeZone, ReminderHour, LogRetentionDays]
     ParameterLabels:
@@ -54,6 +56,25 @@ Parameters:
       This used to default to "*", which let any website on the internet call
       this API from a visitor's browser with their stored token attached.
 
+  CodeBucket:
+    Type: String
+    Default: ""
+    Description: >
+      S3 bucket holding the two function zips. deploy/deploy.sh creates one,
+      uploads the bundles and passes this for you. Left blank, both functions
+      deploy as a placeholder that returns a clear error, so the stack is still
+      valid before anything is built.
+
+  ApiCodeKey:
+    Type: String
+    Default: "api.zip"
+    Description: S3 key of the API bundle inside CodeBucket.
+
+  ReminderCodeKey:
+    Type: String
+    Default: "reminder.zip"
+    Description: S3 key of the reminder bundle inside CodeBucket.
+
   AppUrl:
     Type: String
     Default: ""
@@ -81,6 +102,11 @@ Parameters:
     MinValue: 0
     MaxValue: 23
     Description: Hour of day (0-23, in TimeZone) to send the reminder.
+
+Conditions:
+  # With a bucket, deploy the real bundles. Without one, keep the placeholder
+  # so the stack can be created before any code exists.
+  HasCode: !Not [!Equals [!Ref CodeBucket, ""]]
 
 Resources:
   # ── Storage ────────────────────────────────────────────────────────────
@@ -262,14 +288,17 @@ Resources:
           TABLE_NAME: !Ref FriendsTable
           ALLOWED_ORIGIN: !Ref AllowedOrigin
           SSM_PREFIX: !Sub "/${AWS::StackName}"
-      Code:
-        ZipFile: |
-          export const handler = async () => ({
-            statusCode: 500,
-            body: JSON.stringify({
-              error: "Placeholder. Deploy the real bundle - see deploy/README.md step 3.",
-            }),
-          });
+      Code: !If
+        - HasCode
+        - S3Bucket: !Ref CodeBucket
+          S3Key: !Ref ApiCodeKey
+        - ZipFile: |
+            export const handler = async () => ({
+              statusCode: 500,
+              body: JSON.stringify({
+                error: "Placeholder. Run deploy/deploy.sh to push the real bundle.",
+              }),
+            });
 
   ReminderFunction:
     Type: AWS::Lambda::Function
@@ -290,14 +319,17 @@ Resources:
           TO_ADDRESSES: !Ref ToAddresses
           TZ_NAME: !Ref TimeZone
           APP_URL: !Ref AppUrl
-      Code:
-        ZipFile: |
-          export const handler = async () => ({
-            statusCode: 500,
-            body: JSON.stringify({
-              error: "Placeholder. Deploy the real bundle - see deploy/README.md step 3.",
-            }),
-          });
+      Code: !If
+        - HasCode
+        - S3Bucket: !Ref CodeBucket
+          S3Key: !Ref ReminderCodeKey
+        - ZipFile: |
+            export const handler = async () => ({
+              statusCode: 500,
+              body: JSON.stringify({
+                error: "Placeholder. Run deploy/deploy.sh to push the real bundle.",
+              }),
+            });
 
   # ── Logs ───────────────────────────────────────────────────────────────
   # Declared here rather than left to Lambda's implicit creation, so retention
@@ -411,4 +443,7 @@ Outputs:
     Description: Deploy your API bundle here.
     Value: !Ref ApiFunction
   NextStep:
-    Value: "Upload the two Lambda bundles - see deploy/README.md step 3."
+    Value: !If
+      - HasCode
+      - "Set API_ENDPOINT (this ApiEndpoint value) where the front end is built, and you are done."
+      - "Placeholder code is deployed. Run deploy/deploy.sh to push the real bundles."

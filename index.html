@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self' https://api.emailjs.com https://tnl4m7nt94.execute-api.us-west-2.amazonaws.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; base-uri 'self'; form-action 'none'; frame-ancestors 'none';" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self' https://api.emailjs.com %%API_ORIGIN%%; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; base-uri 'self'; form-action 'none'; frame-ancestors 'none';" />
   <meta name="referrer" content="no-referrer" />
   <title>Birthday Email Automator</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1164,8 +1164,15 @@ function importAll() {
 // read. The API is a sync layer on top, not a replacement.
 //
 // The endpoint is public in this file on purpose -- it is useless without
-// the password, and CORS is pinned to the Pages origin server-side.
-const API = 'https://tnl4m7nt94.execute-api.us-west-2.amazonaws.com';
+// the password, and CORS is pinned to the deploy's own origin server-side.
+//
+// Injected at build time from the API_ENDPOINT secret, the same way the
+// EmailJS values are. It used to be one account's hard-coded URL, which meant
+// anyone who deployed this repo unchanged was quietly reading and writing
+// somebody else's birthday list. Left unsubstituted the app runs local-only:
+// everything works, nothing syncs.
+const API = '%%API_ENDPOINT%%';
+const hasApi = () => API && !API.startsWith('%%');
 const TK = 'bday_token_v1';
 
 // Baked in at build time from the HOUSEHOLD_PASSWORD secret (see
@@ -1189,6 +1196,7 @@ const setToken = t => { try { t ? localStorage.setItem(TK, t) : localStorage.rem
 const signedIn = () => !!token();
 
 async function api(path, opts = {}) {
+  if (!hasApi()) throw new Error('no API configured');
   const res = await fetch(API + path, {
     ...opts,
     headers: {
@@ -1218,7 +1226,7 @@ async function signIn(password) {
 let _autoSignInTried = false;
 async function autoSignIn() {
   if (signedIn()) return true;
-  if (!hasBuiltInPassword() || _autoSignInTried) return false;
+  if (!hasApi() || !hasBuiltInPassword() || _autoSignInTried) return false;
   _autoSignInTried = true;
   try {
     await signIn(BUILT_IN_PASSWORD);
@@ -1349,6 +1357,7 @@ async function syncNow(opts = {}) {
 // gets saved locally and never reaches the reminder.
 let _pushTimer = null;
 function queueSync() {
+  if (!hasApi()) return;
   if (!signedIn() && !hasBuiltInPassword()) return;
   clearTimeout(_pushTimer);
   _pushTimer = setTimeout(() => syncNow({ quiet: true }), 1500);
@@ -1359,6 +1368,16 @@ function updateSyncUI(state) {
   const btn = document.getElementById('sync-btn');
   const box = document.getElementById('signin-box');
   if (!dot || !btn || !box) return;
+  if (!hasApi()) {
+    box.style.display = 'none';
+    btn.style.display = 'none';
+    const so0 = document.getElementById('signout-row');
+    if (so0) so0.style.display = 'none';
+    dot.style.background = '#94a3b8';
+    dot.title = 'No cloud sync configured - this device only';
+    dot.textContent = 'This device only';
+    return;
+  }
   box.style.display = signedIn() ? 'none' : 'block';
   const so = document.getElementById('signout-row');
   if (so) so.style.display = signedIn() ? 'flex' : 'none';

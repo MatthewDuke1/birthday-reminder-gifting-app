@@ -30,22 +30,38 @@ jobs:
           # published HTML in clear text -- see the note in index.html for why
           # that is an accepted trade for a household birthday list.
           HOUSEHOLD_PASSWORD: ${{ secrets.HOUSEHOLD_PASSWORD }}
+          # ApiEndpoint from the CloudFormation stack outputs, e.g.
+          # https://xxxxxxxx.execute-api.us-west-2.amazonaws.com
+          API_ENDPOINT: ${{ secrets.API_ENDPOINT }}
         run: |
           mkdir -p dist
+          # The CSP takes the API origin as a source. The endpoint output is
+          # already bare, so this just drops a trailing slash if one was pasted.
+          API_ORIGIN="${API_ENDPOINT%/}"
           sed \
             -e "s|%%EMAILJS_PUBLIC_KEY%%|${EMAILJS_PUBLIC_KEY}|g" \
             -e "s|%%EMAILJS_SERVICE_ID%%|${EMAILJS_SERVICE_ID}|g" \
             -e "s|%%EMAILJS_TEMPLATE_ID%%|${EMAILJS_TEMPLATE_ID}|g" \
             -e "s|%%HOUSEHOLD_PASSWORD%%|${HOUSEHOLD_PASSWORD}|g" \
+            -e "s|%%API_ENDPOINT%%|${API_ENDPOINT}|g" \
+            -e "s|%%API_ORIGIN%%|${API_ORIGIN}|g" \
             index.html > dist/index.html
           cp -f README.md dist/ 2>/dev/null || true
           touch dist/.nojekyll
 
       - name: Verify the build
         run: |
-          # A leftover placeholder means the secret was not set. EmailJS keys
-          # are optional, but a missing household password silently disables
-          # sync -- which is the exact failure this feature exists to remove.
+          # A leftover placeholder means the secret was not set.
+          #
+          # No endpoint means there is no backend to talk to at all: the app
+          # still runs, but local-only, and no reminder will ever fire.
+          if grep -q '%%API_ENDPOINT%%' dist/index.html; then
+            echo "::warning::API_ENDPOINT secret is not set. The app will run"
+            echo "::warning::local-only: no cloud sync and no reminder emails."
+            echo "::warning::Set it to the ApiEndpoint output of your stack."
+          fi
+          # EmailJS keys are optional, but a missing household password
+          # silently disables sync -- the exact failure this feature removes.
           if grep -q '%%HOUSEHOLD_PASSWORD%%' dist/index.html; then
             echo "::warning::HOUSEHOLD_PASSWORD secret is not set. The app will"
             echo "::warning::require a manual sign-in and birthdays added while"
