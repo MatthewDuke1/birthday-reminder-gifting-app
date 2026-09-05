@@ -14,15 +14,36 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, QueryCommand, PutCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
 
-const REGION = process.env.AWS_REGION || "us-west-2";
-const TABLE = process.env.TABLE_NAME || "bdayapp-friends";
-const FROM = process.env.FROM_ADDRESS || "matthewduke0@gmail.com";
-const TO = (process.env.TO_ADDRESSES || "matthewduke0@gmail.com,msb9519@gmail.com")
-  .split(",").map(s => s.trim()).filter(Boolean);
+// Config is resolved lazily so the pure helpers below stay importable and
+// testable without a configured environment.
+//
+// The defaults that used to sit here were this repo author's own table, own
+// sender and own inbox. In someone else's account that is not a convenience:
+// a half-configured stack would mail another household's birthdays to a
+// stranger. Missing config is now a loud failure instead of a silent one.
+function required(name) {
+  const v = process.env[name];
+  if (!v) throw new Error("missing required env var " + name);
+  return v;
+}
 
-// Reminders are meaningful in local time -- "7 days before" should mean
-// 7 calendar days where the household lives, not in UTC.
-const TZ = process.env.TZ_NAME || "America/Chicago";
+const REGION = process.env.AWS_REGION || "us-east-1";
+
+function config() {
+  const to = required("TO_ADDRESSES").split(",").map(s => s.trim()).filter(Boolean);
+  if (!to.length) throw new Error("TO_ADDRESSES is set but empty");
+  return {
+    table: required("TABLE_NAME"),
+    from: required("FROM_ADDRESS"),
+    to,
+    // Reminders are meaningful in local time -- "7 days before" should mean
+    // 7 calendar days where the household lives, not in UTC.
+    tz: process.env.TZ_NAME || "America/Chicago",
+    // Footer link. No default: pointing every deployment back at the author's
+    // Pages site is both wrong and a quiet outbound signal.
+    appUrl: process.env.APP_URL || "",
+  };
+}
 
 const OWNER = "household";
 const SENT_PARTITION = "__sent";
@@ -32,9 +53,9 @@ const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }));
 const ses = new SESClient({ region: REGION });
 
 // "Today" in the household's timezone, as YYYY-MM-DD.
-function localToday() {
+function localToday(tz) {
   const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit",
+    timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
   }).formatToParts(new Date());
   const get = t => parts.find(p => p.type === t).value;
   return `${get("year")}-${get("month")}-${get("day")}`;
@@ -147,12 +168,12 @@ export function giftLinks(f) {
   ];
 }
 
-async function loadFriends() {
+async function loadFriends(table) {
   const items = [];
   let ExclusiveStartKey;
   do {
     const page = await ddb.send(new QueryCommand({
-      TableName: TABLE,
+      TableName: table,
       KeyConditionExpression: "ownerId = :o",
       ExpressionAttributeValues: { ":o": OWNER },
       ExclusiveStartKey,
@@ -168,10 +189,10 @@ async function loadFriends() {
 // second identical email.
 const markerId = (friendId, year, offset) => `${friendId}#${year}#${offset}`;
 
-async function alreadySent(id) {
+async function alreadySent(table, id) {
   try {
     const out = await ddb.send(new GetCommand({
-      TableName: TABLE, Key: { ownerId: SENT_PARTITION, friendId: id },
+      TableName: table, Key: { ownerId: SENT_PARTITION, friendId: id },
     }));
     return !!out.Item;
   } catch (e) {
@@ -182,15 +203,15 @@ async function alreadySent(id) {
   }
 }
 
-async function markSent(id) {
+async function markSent(table, id) {
   const ttl = Math.floor(Date.now() / 1000) + 400 * 24 * 60 * 60;
   await ddb.send(new PutCommand({
-    TableName: TABLE,
+    TableName: table,
     Item: { ownerId: SENT_PARTITION, friendId: id, sentAt: new Date().toISOString(), expiresAt: ttl },
   }));
 }
 
-function buildEmail(groups, todayStr) {
+function buildEmail(groups, todayStr, appUrl) {
   const lines = [];
   const subjects = [];
 
@@ -220,16 +241,19 @@ function buildEmail(groups, todayStr) {
     ? `Birthday reminder: ${allNames[0]}`
     : `Birthday reminder: ${subjects.join(", ")}`;
 
-  lines.push("---");
-  lines.push("https://matthewduke1.github.io/birthday-reminder-gifting-app/");
+  if (appUrl) {
+    lines.push("---");
+    lines.push(appUrl);
+  }
 
   return { subject: subject.slice(0, 200), body: lines.join("\n") };
 }
 
 export const handler = async () => {
-  const todayStr = localToday();
+  const cfg = config();
+  const todayStr = localToday(cfg.tz);
   const year = Number(todayStr.slice(0, 4));
-  const friends = await loadFriends();
+  const friends = await loadFriends(cfg.table);
 
   const groups = {};
   const toMark = [];
@@ -239,7 +263,7 @@ export const handler = async () => {
     const d = daysUntil(f.birthday, todayStr);
     if (!OFFSETS.includes(d)) continue;
     const id = markerId(f.friendId, year, d);
-    if (await alreadySent(id)) continue;
+    if (await alreadySent(cfg.table, id)) continue;
     (groups[d] ||= []).push(f);
     toMark.push(id);
   }
@@ -248,11 +272,11 @@ export const handler = async () => {
     return { statusCode: 200, body: JSON.stringify({ sent: 0, date: todayStr, reason: "nothing due" }) };
   }
 
-  const { subject, body } = buildEmail(groups, todayStr);
+  const { subject, body } = buildEmail(groups, todayStr, cfg.appUrl);
 
   await ses.send(new SendEmailCommand({
-    Source: FROM,
-    Destination: { ToAddresses: TO },
+    Source: cfg.from,
+    Destination: { ToAddresses: cfg.to },
     Message: {
       Subject: { Data: subject, Charset: "UTF-8" },
       Body: { Text: { Data: body, Charset: "UTF-8" } },
@@ -261,7 +285,7 @@ export const handler = async () => {
 
   // Only mark after SES accepts. If the send throws, nothing is marked and
   // tomorrow's run retries -- the window is what makes that recovery work.
-  for (const id of toMark) await markSent(id);
+  for (const id of toMark) await markSent(cfg.table, id);
 
   return { statusCode: 200, body: JSON.stringify({ sent: toMark.length, date: todayStr, subject }) };
 };
