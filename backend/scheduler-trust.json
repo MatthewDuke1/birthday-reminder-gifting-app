@@ -6,7 +6,7 @@
       "Principal": { "Service": "scheduler.amazonaws.com" },
       "Action": "sts:AssumeRole",
       "Condition": {
-        "StringEquals": { "aws:SourceAccount": "148238840070" }
+        "StringEquals": { "aws:SourceAccount": "ACCOUNT_ID" }
       }
     }
   ]
