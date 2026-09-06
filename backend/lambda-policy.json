@@ -12,15 +12,15 @@
         "dynamodb:DeleteItem",
         "dynamodb:BatchWriteItem"
       ],
-      "Resource": "arn:aws:dynamodb:us-west-2:148238840070:table/bdayapp-friends"
+      "Resource": "arn:aws:dynamodb:REGION:ACCOUNT_ID:table/bdayapp-friends"
     },
     {
       "Sid": "AppSecretsOnly",
       "Effect": "Allow",
       "Action": "ssm:GetParameters",
       "Resource": [
-        "arn:aws:ssm:us-west-2:148238840070:parameter/bdayapp/password-hash",
-        "arn:aws:ssm:us-west-2:148238840070:parameter/bdayapp/jwt-secret"
+        "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/bdayapp/password-hash",
+        "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/bdayapp/jwt-secret"
       ]
     },
     {
@@ -29,7 +29,7 @@
       "Action": "kms:Decrypt",
       "Resource": "*",
       "Condition": {
-        "StringEquals": { "kms:ViaService": "ssm.us-west-2.amazonaws.com" }
+        "StringEquals": { "kms:ViaService": "ssm.REGION.amazonaws.com" }
       }
     },
     {
@@ -41,7 +41,7 @@
       ],
       "Resource": "*",
       "Condition": {
-        "StringEquals": { "ses:FromAddress": "birthdays@the-duke.org" }
+        "StringEquals": { "ses:FromAddress": "FROM_ADDRESS" }
       }
     }
   ]
