@@ -42,6 +42,8 @@ function config() {
     // Footer link. No default: pointing every deployment back at the author's
     // Pages site is both wrong and a quiet outbound signal.
     appUrl: process.env.APP_URL || "",
+    // Signs the birthday card. A card from a bare address reads as spam.
+    fromName: process.env.FROM_NAME || "",
   };
 }
 
@@ -329,6 +331,63 @@ function buildHtml(groups, todayStr, appUrl, headline) {
 </html>`;
 }
 
+// ── Birthday card ────────────────────────────────────────────────────────
+// The reminder mails the HOUSEHOLD ("Sarah's birthday is in 7 days"). A card
+// mails the FRIEND, on the day. Different recipient, different consent story:
+// nothing is sent unless that friend has sendCard set AND has an email, so
+// importing a CSV can never quietly start mailing strangers.
+//
+// Table layout + inline styles because Outlook renders with Word's engine.
+// The cake is an emoji rather than a hosted image so the header survives the
+// images-off default. No tracking pixel, nothing external to load.
+export function buildCard(friend, todayStr, fromName) {
+  const name = String(friend.name || "").trim();
+  const age = friend.hideAge ? null : ordinalAge(friend.birthday, todayStr);
+  const greeting = age ? `Happy ${age}${ordinalSuffix(age)} Birthday` : "Happy Birthday";
+  const signer = (fromName || "").trim();
+  const signoff = signer ? `— ${signer}` : "";
+
+  const subject = `${greeting}, ${name} 🎂`;
+
+  const paras = ["Hope today treats you well and somebody else does the dishes."];
+  if (age) paras.push(`${age} looks good on you. Have a great one.`);
+  if (signoff) paras.push(signoff);
+
+  const text = [`${greeting}, ${name}!`, "", ...paras.flatMap(p => [p, ""]),
+    "--",
+    `Sent automatically by a birthday reminder${signer ? " " + signer + " runs" : ""}.`,
+    "Reply directly - nobody else sees this."].join("\n");
+
+  const esc = t => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const body = paras.map((p, i) =>
+    `<p style="margin:0 0 ${i === paras.length - 1 ? "0" : "16px"};">${esc(p)}</p>`).join("");
+
+  const html = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#EFEAE2;margin:0;padding:0;">
+<tr><td align="center" style="padding:0;">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background:#FFFFFF;border-radius:10px;overflow:hidden;border:1px solid #E3DACE;">
+<tr><td style="background:#B4503A;padding:30px 34px 26px;text-align:center;">
+<div style="font-size:40px;line-height:1;margin-bottom:10px;">&#127874;</div>
+<h1 style="margin:0;font-family:Georgia,'Times New Roman',serif;font-size:28px;line-height:1.2;font-weight:700;color:#FFFFFF;">${esc(greeting)},<br>${esc(name)}!</h1>
+</td></tr>
+<tr><td style="padding:30px 34px 10px;font-family:Helvetica,Arial,sans-serif;font-size:16px;line-height:1.65;color:#221D18;">${body}</td></tr>
+<tr><td style="padding:22px 34px 30px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+<td style="border-top:1px solid #EBE4DA;padding-top:16px;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.5;color:#8A8077;">
+Sent automatically by a birthday reminder${signer ? " " + esc(signer) + " runs" : ""}. Reply directly &mdash; nobody else sees this.
+</td></tr></table>
+</td></tr>
+</table>
+</td></tr></table>`;
+
+  return { subject, text, html };
+}
+
+const ordinalSuffix = n => {
+  const t = n % 100;
+  if (t >= 11 && t <= 13) return "th";
+  return { 1: "st", 2: "nd", 3: "rd" }[n % 10] || "th";
+};
+
 function buildEmail(groups, todayStr, appUrl) {
   const lines = [];
   const subjects = [];
@@ -418,5 +477,34 @@ export const handler = async () => {
   // tomorrow's run retries -- the window is what makes that recovery work.
   for (const id of toMark) await markSent(cfg.table, id);
 
-  return { statusCode: 200, body: JSON.stringify({ sent: toMark.length, date: todayStr, subject }) };
+  // Cards go out one at a time, each with its own marker, so one bad address
+  // cannot cost the whole batch. A card failing is also not allowed to fail
+  // the run: the household reminder already went, and burning the marker for
+  // that would double-send it tomorrow.
+  let cards = 0;
+  for (const f of (groups[0] || [])) {
+    if (!f.sendCard || !f.email) continue;
+    const cardId = markerId(f.friendId, year, "card");
+    if (await alreadySent(cfg.table, cardId)) continue;
+    const card = buildCard(f, todayStr, cfg.fromName);
+    try {
+      await ses.send(new SendEmailCommand({
+        Source: cfg.from,
+        Destination: { ToAddresses: [f.email] },
+        Message: {
+          Subject: { Data: card.subject, Charset: "UTF-8" },
+          Body: {
+            Text: { Data: card.text, Charset: "UTF-8" },
+            Html: { Data: card.html, Charset: "UTF-8" },
+          },
+        },
+      }));
+      await markSent(cfg.table, cardId);
+      cards++;
+    } catch (e) {
+      console.error("card send failed for " + f.friendId + ": " + e.message);
+    }
+  }
+
+  return { statusCode: 200, body: JSON.stringify({ sent: toMark.length, cards, date: todayStr, subject }) };
 };
