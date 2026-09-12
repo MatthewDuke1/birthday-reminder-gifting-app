@@ -213,6 +213,14 @@
         <div>
           <label class="flabel">Birthday</label>
           <input type="date" id="inp-birthday" min="1900-01-01" max="2099-12-31" />
+          <label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:12px;color:var(--text3);cursor:pointer;">
+            <input type="checkbox" id="inp-hide-age" style="margin:0;" />
+            Year is a guess &mdash; don't show age
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;margin-top:4px;font-size:12px;color:var(--text3);cursor:pointer;">
+            <input type="checkbox" id="inp-send-card" style="margin:0;" />
+            Email them a card on the day
+          </label>
         </div>
         <div>
           <label class="flabel">Relationship</label>
@@ -408,6 +416,17 @@ function isValidBirthday(s) {
   const dt = new Date(s+'T00:00:00');
   return dt.getUTCFullYear()===y && (dt.getUTCMonth()+1)===m && dt.getUTCDate()===d;
 }
+// Age is DERIVED, never stored -- a stored number is stale the day after you
+// type it, and the birthday already carries a required year (1900-2099).
+function currentAge(birthday) {
+  if (!isValidBirthday(birthday)) return null;
+  const [by, bm, bd] = birthday.split('-').map(Number);
+  const now = new Date();
+  const ty = now.getFullYear(), tm = now.getMonth() + 1, td = now.getDate();
+  const had = tm > bm || (tm === bm && td >= bd);
+  const age = ty - by - (had ? 0 : 1);
+  return age >= 0 && age < 130 ? age : null;
+}
 // CSV formula-injection guard: prefix any cell that starts with =, +, -, @, TAB, CR with a single quote.
 const csvSafe = v => {
   const s = String(v==null?'':v);
@@ -448,6 +467,7 @@ function migrateLegacyFriends() {
       merged.push({
         name: clean(f.name, 100), email: clean(f.email, 254), birthday: f.birthday,
         relation: clean(f.relation, 40), notes: clean(f.notes, 500),
+        hideAge: !!f.hideAge, sendCard: !!f.sendCard,
         source: clean(f.source, 20) || 'recovered',
       });
       recovered++;
@@ -632,12 +652,14 @@ function renderFriends() {
                 : d<=30?`<span class="pill pill-soon" style="margin-left:4px;">In ${d}d</span>`:'';
     const relPill=f.relation?`<span class="pill" style="${pillStyle(f.relation)};margin-left:4px;">${esc(f.relation)}</span>`:'';
     const srcPill=f.source?`<span class="pill" style="background:var(--bg2);color:var(--text3);margin-left:4px;font-size:10px;">${esc(f.source)}</span>`:'';
-    const meta=(f.email?esc(f.email)+' · ':'')+esc(fmtB(f.birthday));
+    const age=f.hideAge?null:currentAge(f.birthday);
+    const meta=(f.email?esc(f.email)+' · ':'')+esc(fmtB(f.birthday))+(age!==null?' · age '+age:'');
+    const cardPill=f.sendCard?'<span class="pill" style="background:var(--bg2);color:var(--text3);margin-left:4px;font-size:10px;">card 🎂</span>':'';
     return `<div class="friend-row">
       <div class="avatar" style="${avStyle(f.relation)}">${esc(initials(f.name))}</div>
       <div class="friend-info">
         <div style="display:flex;align-items:center;flex-wrap:wrap;gap:2px;">
-          <span class="friend-name">${esc(f.name)}</span>${relPill}${srcPill}${badge}
+          <span class="friend-name">${esc(f.name)}</span>${relPill}${srcPill}${cardPill}${badge}
         </div>
         <div class="friend-meta">${meta}</div>
         <div class="gift-row">
@@ -690,8 +712,12 @@ function addFriendFromForm() {
   if(!name){showStatus('Name is required.','error');return;}
   if(!isValidBirthday(birthday)){showStatus('Please enter a valid birthday between 1900 and 2099.','error');return;}
   if(email && !isValidEmail(email)){showStatus('Email address is not valid.','error');return;}
-  if(!addFriend({name,email,birthday,relation,notes})) return;
+  const hideAge  = document.getElementById('inp-hide-age').checked;
+  const sendCard = document.getElementById('inp-send-card').checked;
+  if(sendCard && !email){showStatus('A card needs an email address.','error');return;}
+  if(!addFriend({name,email,birthday,relation,notes,hideAge,sendCard})) return;
   ['inp-name','inp-email','inp-birthday','inp-notes','inp-custom-rel'].forEach(id=>document.getElementById(id).value='');
+  ['inp-hide-age','inp-send-card'].forEach(id=>document.getElementById(id).checked=false);
   document.getElementById('inp-relation').value='';
   document.getElementById('custom-rel-wrap').classList.remove('show');
   showStatus(name+' added!');
@@ -711,7 +737,10 @@ function addFriend(data) {
   if(!name || !isValidBirthday(birthday)) {showStatus('Invalid friend record skipped.','warn');return false;}
   if(email && !isValidEmail(email)) {showStatus(`Skipping ${name}: email not valid.`,'warn');return false;}
   if(fs.find(f=>f.name.toLowerCase()===name.toLowerCase())){showStatus(name+' is already in your list.','warn');return false;}
-  fs.push({name,email,birthday,relation,notes,source});
+  const hideAge  = !!data.hideAge;
+  // A card with no address is not a card. Never let the flag survive without one.
+  const sendCard = !!data.sendCard && !!email;
+  fs.push({name,email,birthday,relation,notes,source,hideAge,sendCard});
   if(!sv(FK,fs)) return false;
   // Adding someone back overrides an earlier delete, otherwise the next merge
   // would honour the stale tombstone and drop them again.
@@ -785,7 +814,8 @@ function importBackupFile(file) {
     for (const f of data.friends) {
       if (!f || !f.name) { skipped++; continue; }
       if (addFriend({name:f.name, email:f.email||'', birthday:f.birthday,
-                     relation:f.relation||'Friend', notes:f.notes||'', source:'restore'})) added++;
+                     relation:f.relation||'Friend', notes:f.notes||'', source:'restore',
+                     hideAge:!!f.hideAge, sendCard:!!f.sendCard})) added++;
       else skipped++;
     }
     renderFriends(); renderUpcoming();

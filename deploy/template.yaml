@@ -61,6 +61,14 @@ Parameters:
       Optional. Shown as the footer link in the reminder email. Leave blank for
       no link.
 
+  FromName:
+    Type: String
+    Default: ""
+    Description: >
+      Optional. Signs the birthday card sent to friends ("- Matt") and names
+      who runs the reminder in its footer. Leave blank to send the card
+      unsigned. Has no effect on the household reminder.
+
   LogRetentionDays:
     Type: Number
     Default: 30
@@ -290,6 +298,7 @@ Resources:
           TO_ADDRESSES: !Ref ToAddresses
           TZ_NAME: !Ref TimeZone
           APP_URL: !Ref AppUrl
+          FROM_NAME: !Ref FromName
       Code:
         ZipFile: |
           export const handler = async () => ({
