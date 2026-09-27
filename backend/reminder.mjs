@@ -359,39 +359,40 @@ export function buildCard(friend, todayStr, fromName) {
   const body = paras.map((p, i) => {
     const last = i === paras.length - 1;
     const sign = signoff && last;
-    return `<p style="margin:0 0 ${last ? "0" : "16px"};${sign ? "font-family:Georgia,'Times New Roman',serif;font-style:italic;font-size:18px;color:#B4503A;" : ""}">${esc(p)}</p>`;
+    return `<p style="margin:0 0 ${last ? "0" : "16px"};${sign ? "font-family:Georgia,'Times New Roman',serif;font-style:italic;font-size:18px;color:#E0664F;" : ""}">${esc(p)}</p>`;
   }).join("");
 
-  // Confetti is coloured text glyphs, not images or CSS shapes: glyphs render
+  // Sparkles are coloured text glyphs, not images or CSS shapes: glyphs render
   // in Outlook's Word engine and with images off, where both of those vanish.
-  const confetti = (pattern, size, colors) => `<div style="font-size:${size}px;line-height:1.4;letter-spacing:6px;">${
+  // The palms and flowers are emoji for the same reason.
+  const sparkle = (pattern, size, colors) => `<div style="font-size:${size}px;line-height:1.4;letter-spacing:6px;">${
     pattern.split(" ").map((ch, i) => `<span style="color:${colors[i % colors.length]};">${ch}</span>`).join(" ")}</div>`;
+  const emojiRow = (row, size) => `<div style="font-size:${size}px;line-height:1.2;letter-spacing:10px;">${row}</div>`;
 
-  // Gradients sit on top of a solid bgcolor, so clients that drop
-  // background-image (Outlook desktop) still get the same warm tones.
-  const html = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#F4E1D2" style="background-color:#F4E1D2;background-image:linear-gradient(160deg,#F9E7D8 0%,#F2D4C6 55%,#EBC9C4 100%);margin:0;padding:0;">
-<tr><td align="center" style="padding:36px 14px 40px;">
-${confetti("✦ ● ✦ ● ✦", 17, CONFETTI_ON_PAGE)}
-<table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFFDF9" style="width:100%;max-width:560px;margin-top:14px;background:#FFFDF9;border-radius:18px;overflow:hidden;border:1px solid #E8CFC0;box-shadow:0 12px 32px rgba(122,52,30,.16);">
-<tr><td align="center" bgcolor="#B4503A" style="background-color:#B4503A;background-image:linear-gradient(145deg,#C8603F 0%,#B4503A 50%,#8E3A28 100%);padding:28px 34px 32px;text-align:center;">
-${confetti("● ✦ ● ✦ ● ✦ ●", 14, CONFETTI_ON_RED)}
+  // A sunrise sky fading into a lagoon. Every gradient sits on a solid
+  // bgcolor, so clients that drop background-image (Outlook desktop) still
+  // get the same sea-green tone.
+  const html = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#A6DCD4" style="background-color:#A6DCD4;background-image:linear-gradient(180deg,#FFE3C2 0%,#FBD6BC 16%,#C6E9E2 44%,#86D1C9 74%,#4FB2AE 100%);margin:0;padding:0;">
+<tr><td align="center" style="padding:34px 14px 38px;">
+${emojiRow("&#127796; &#127802; &#127796;", 26)}
+<table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFFDF7" style="width:100%;max-width:560px;margin-top:16px;background:#FFFDF7;border-radius:18px;overflow:hidden;border:1px solid #CFE8E3;box-shadow:0 14px 36px rgba(16,86,92,.22);">
+<tr><td align="center" bgcolor="#148A8E" style="background-color:#148A8E;background-image:linear-gradient(160deg,#35B5AC 0%,#178C90 55%,#0C6974 100%);padding:28px 34px 32px;text-align:center;">
+${sparkle("● ✦ ● ✦ ● ✦ ●", 14, SPARKLE_ON_SEA)}
 <div style="font-size:52px;line-height:1;margin:14px 0 12px;">&#127874;</div>
 <h1 style="margin:0;font-family:Georgia,'Times New Roman',serif;font-size:30px;line-height:1.2;font-weight:700;color:#FFFFFF;">${esc(greeting)},<br>${esc(name)}!</h1>
-<div style="margin-top:16px;">${confetti("✦ ● ✦", 14, CONFETTI_ON_RED)}</div>
+<div style="margin-top:16px;">${sparkle("✦ ● ✦", 14, SPARKLE_ON_SEA)}</div>
 </td></tr>
-<tr><td align="center" style="padding:34px 40px 36px;font-family:Helvetica,Arial,sans-serif;font-size:17px;line-height:1.7;color:#2B221C;text-align:center;">${body}</td></tr>
-<tr><td style="height:8px;line-height:8px;font-size:0;background-color:#E9A23B;background-image:linear-gradient(90deg,#E9A23B,#E07A6B,#B4503A,#6FB3A7);" bgcolor="#E9A23B">&nbsp;</td></tr>
+<tr><td align="center" style="padding:34px 40px 36px;font-family:Helvetica,Arial,sans-serif;font-size:17px;line-height:1.7;color:#1F2B2C;text-align:center;">${body}</td></tr>
+<tr><td style="height:8px;line-height:8px;font-size:0;background-color:#F2C38B;background-image:linear-gradient(90deg,#F6D29B,#F28C6B,#35B5AC,#0C6974);" bgcolor="#F2C38B">&nbsp;</td></tr>
 </table>
-<div style="margin-top:14px;">${confetti("● ✦ ● ✦ ●", 17, CONFETTI_ON_PAGE)}</div>
+<div style="margin-top:18px;">${emojiRow("&#128026; &#127754; &#128026;", 22)}</div>
 </td></tr></table>`;
 
   return { subject, text, html };
 }
 
-// Two sets, because the same confetti cannot read on both the pale page and
-// the terracotta header.
-const CONFETTI_ON_PAGE = ["#B4503A", "#E9A23B", "#6FB3A7", "#D9736A"];
-const CONFETTI_ON_RED = ["#F7D06A", "#FFF3E6", "#F2A48F", "#9ED3C8"];
+// Sand, coral, white and seafoam: they all read against the teal header.
+const SPARKLE_ON_SEA = ["#FFE0A8", "#FFFFFF", "#FFA98C", "#B8F0E6"];
 
 const ordinalSuffix = n => {
   const t = n % 100;
