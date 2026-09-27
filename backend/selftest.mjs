@@ -1,7 +1,7 @@
-// Quick self-test for the auth + sanitiser primitives. Not a full test
-// suite -- just enough to catch the things that silently break: the
-// control-character strip, scrypt verification, and token round-tripping.
-import crypto from "crypto";
+// Quick self-test for the API's input sanitiser. Not a full test suite --
+// just enough to catch the thing that silently breaks: the control-character
+// strip. (Sign-in moved to Cognito, so there is no password or token code
+// left in the API to test here.)
 
 let fail = 0;
 const ok = (label, cond) => { console.log((cond ? "PASS " : "FAIL ") + label); if (!cond) fail++; };
@@ -20,73 +20,6 @@ ok("trims whitespace", s("   Ann   ", 100) === "Ann");
 ok("truncates to n", s("abcdefghij", 4) === "abcd");
 ok("non-string returns empty", s(null, 100) === "");
 ok("keeps normal names", s("Mary-Jane O'Neil", 100) === "Mary-Jane O'Neil");
-
-// --- scrypt password check ----------------------------------------------
-function checkPassword(pw, stored) {
-  const parts = String(stored).split("$");
-  if (parts.length !== 3 || parts[0] !== "scrypt") return false;
-  const [, salt, want] = parts;
-  const got = crypto.scryptSync(pw, salt, 64).toString("hex");
-  if (got.length !== want.length) return false;
-  return crypto.timingSafeEqual(Buffer.from(got), Buffer.from(want));
-}
-
-const PW = "DIy*v/VYnI0";
-const salt = crypto.randomBytes(16).toString("hex");
-const stored = "scrypt$" + salt + "$" + crypto.scryptSync(PW, salt, 64).toString("hex");
-
-ok("correct password verifies", checkPassword(PW, stored) === true);
-ok("wrong password rejected", checkPassword("nope", stored) === false);
-ok("empty password rejected", checkPassword("", stored) === false);
-ok("malformed hash rejected", checkPassword(PW, "garbage") === false);
-
-// --- token sign / verify -------------------------------------------------
-const b64u = buf => Buffer.from(buf).toString("base64url");
-const SECRET = crypto.randomBytes(48).toString("base64url");
-
-function sign(payload, secret) {
-  const body = b64u(JSON.stringify(payload));
-  const mac = crypto.createHmac("sha256", secret).update(body).digest();
-  return body + "." + b64u(mac);
-}
-
-function verifyToken(token, secret) {
-  if (typeof token !== "string" || !token.includes(".")) return null;
-  const [body, mac] = token.split(".");
-  const expected = b64u(crypto.createHmac("sha256", secret).update(body).digest());
-  if (mac.length !== expected.length) return null;
-  if (!crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(expected))) return null;
-  let payload;
-  try { payload = JSON.parse(Buffer.from(body, "base64url").toString()); } catch { return null; }
-  if (!payload || typeof payload.exp !== "number" || payload.exp < Date.now() / 1000) return null;
-  if (payload.sub !== OWNER) return null;
-  if (typeof payload.iat === "number" && payload.exp - payload.iat > TOKEN_TTL_SEC) return null;
-  return payload;
-}
-
-const OWNER = "household";
-const TOKEN_TTL_SEC = 30 * 24 * 60 * 60;
-
-const future = Math.floor(Date.now() / 1000) + 3600;
-const past = Math.floor(Date.now() / 1000) - 3600;
-const now = Math.floor(Date.now() / 1000);
-
-ok("valid token verifies", verifyToken(sign({ sub: "household", exp: future }, SECRET), SECRET)?.sub === "household");
-ok("expired token rejected", verifyToken(sign({ sub: "household", exp: past }, SECRET), SECRET) === null);
-ok("wrong secret rejected", verifyToken(sign({ sub: "household", exp: future }, SECRET), "other-secret") === null);
-ok("tampered body rejected", verifyToken("eyJhIjoxfQ." + sign({ sub: "x", exp: future }, SECRET).split(".")[1], SECRET) === null);
-ok("garbage rejected", verifyToken("not-a-token", SECRET) === null);
-ok("empty rejected", verifyToken("", SECRET) === null);
-
-// A correct signature is not the same as a token meant for this endpoint.
-ok("foreign subject rejected", verifyToken(sign({ sub: "someone-else", exp: future }, SECRET), SECRET) === null);
-ok("missing subject rejected", verifyToken(sign({ exp: future }, SECRET), SECRET) === null);
-// A validly signed token from an older build with a longer TTL should not
-// outlive the policy the current build enforces.
-ok("over-long lifetime rejected",
-   verifyToken(sign({ sub: OWNER, iat: now, exp: now + TOKEN_TTL_SEC + 60 }, SECRET), SECRET) === null);
-ok("lifetime within policy accepted",
-   verifyToken(sign({ sub: OWNER, iat: now, exp: now + 3600 }, SECRET), SECRET)?.sub === OWNER);
 
 console.log(fail ? `\n${fail} FAILED` : "\nall passed");
 process.exit(fail ? 1 : 0);

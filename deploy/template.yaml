@@ -1,35 +1,56 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   Birthday Email Automator - full backend. Creates the DynamoDB table, both
-  Lambdas, the HTTP API, the daily schedule, and the IAM roles. Everything is
+  Lambdas, the HTTP API, the Cognito sign-in, the daily schedule, and the IAM
+  roles. Everything is
   serverless and pay-per-request, so an idle stack costs nothing.
 
 Metadata:
   AWS::CloudFormation::Interface:
     ParameterGroups:
       - Label: { default: "Required" }
-        Parameters: [HouseholdPassword, FromAddress, ToAddresses]
+        Parameters: [SignInEmail, SignInDomainPrefix, AppUrl, AllowedOrigin, FromAddress, SesIdentity, ToAddresses]
       - Label: { default: "Optional" }
-        Parameters: [AppUrl, TimeZone, ReminderHour, LogRetentionDays]
+        Parameters: [SecondSignInEmail, FromName, TimeZone, ReminderHour, LogRetentionDays]
     ParameterLabels:
-      HouseholdPassword: { default: "Password to protect your birthday list" }
+      SignInEmail: { default: "Email of the first person who can sign in" }
+      SecondSignInEmail: { default: "Email of a second person who can sign in" }
+      SignInDomainPrefix: { default: "Prefix for the Cognito sign-in page address" }
+      SesIdentity: { default: "SES identity the sender address belongs to" }
       FromAddress: { default: "Verified SES sender address" }
       ToAddresses: { default: "Who receives the reminders" }
       AllowedOrigin: { default: "Exact URL the app is served from" }
-      AppUrl: { default: "Link shown at the bottom of the reminder" }
+      AppUrl: { default: "Full URL of the app page" }
 
 Parameters:
-  HouseholdPassword:
+  SignInEmail:
     Type: String
-    NoEcho: true
-    MinLength: 12
-    MaxLength: 128
+    AllowedPattern: '^[^@\s]+@[^@\s]+\.[^@\s]+$'
     Description: >
-      Used to sign in to the app. Only its scrypt hash is stored on the server,
-      in SSM as a SecureString. Note that CloudFormation keeps the value you
-      type here in this stack's resource properties, so anyone with
-      cloudformation:DescribeStackResource in the account can read it back -
-      treat it as an account-level secret and rotate it by updating the stack.
+      Signs in with a one-time code emailed here. Sign-in is invite-only: the
+      only accounts are the ones this template creates, and nobody can
+      register. Must be deliverable from SES - in the sandbox that means a
+      verified address.
+
+  SecondSignInEmail:
+    Type: String
+    Default: ""
+    Description: Optional. A second person who shares the same birthday list.
+
+  SignInDomainPrefix:
+    Type: String
+    AllowedPattern: '^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$'
+    Description: >
+      The sign-in page is served at https://<prefix>.auth.<region>.amazoncognito.com.
+      Must be unique within the region and cannot contain "aws", "amazon" or
+      "cognito".
+
+  SesIdentity:
+    Type: String
+    Description: >
+      The verified SES identity that FromAddress belongs to - usually its
+      domain (yourdomain.com), or the address itself if you verified just that.
+      Cognito sends the sign-in codes through it.
 
   FromAddress:
     Type: String
@@ -52,22 +73,24 @@ Parameters:
     Description: >
       The single origin the app is served from, e.g. https://yourname.github.io.
       This used to default to "*", which let any website on the internet call
-      this API from a visitor's browser with their stored token attached.
+      this API from a visitor's browser.
 
   AppUrl:
     Type: String
-    Default: ""
+    AllowedPattern: '^https://[^*\s]+$'
     Description: >
-      Optional. Shown as the footer link in the reminder email. Leave blank for
-      no link.
+      The exact page the app is served from, e.g.
+      https://yourname.github.io/birthday-reminder-gifting-app/. Cognito only
+      sends people back to this URL after sign-in. Also the footer link in the
+      reminder email.
 
   FromName:
     Type: String
     Default: ""
     Description: >
-      Optional. Signs the birthday card sent to friends ("- Matt") and names
-      who runs the reminder in its footer. Leave blank to send the card
-      unsigned. Has no effect on the household reminder.
+      Optional. Signs the birthday card sent to friends ("- Matt"). Leave
+      blank to send the card unsigned. Has no effect on the household
+      reminder.
 
   LogRetentionDays:
     Type: Number
@@ -89,6 +112,9 @@ Parameters:
     MinValue: 0
     MaxValue: 23
     Description: Hour of day (0-23, in TimeZone) to send the reminder.
+
+Conditions:
+  HasSecondUser: !Not [!Equals [!Ref SecondSignInEmail, ""]]
 
 Resources:
   # ── Storage ────────────────────────────────────────────────────────────
@@ -115,94 +141,107 @@ Resources:
       SSESpecification:
         SSEEnabled: true
 
-  # ── Secrets ────────────────────────────────────────────────────────────
-  # The password hash and the token-signing secret are written by a custom
-  # resource so the plain password never lands in the template output.
-  SecretsWriterRole:
-    Type: AWS::IAM::Role
+  # ── Sign-in ────────────────────────────────────────────────────────────
+  # Cognito's hosted page with a one-time code emailed to you. Invite-only:
+  # the users below are the only accounts, and nobody can register.
+  UserPool:
+    Type: AWS::Cognito::UserPool
     Properties:
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal: { Service: lambda.amazonaws.com }
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      UserPoolName: !Sub "${AWS::StackName}-users"
+      # Email one-time codes need the Essentials tier; it is free for the
+      # first 10,000 monthly active users.
+      UserPoolTier: ESSENTIALS
+      UsernameAttributes: [email]
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      MfaConfiguration: "OFF"
       Policies:
-        - PolicyName: WriteAppSecrets
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action: [ssm:PutParameter, ssm:DeleteParameter]
-                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AWS::StackName}/*"
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+        # PASSWORD cannot be left out of this list. Nobody is ever told a
+        # password (see the SetPasswordCommand output), so the emailed code is
+        # the only way in in practice.
+        SignInPolicy:
+          AllowedFirstAuthFactors: [PASSWORD, EMAIL_OTP]
+      # Cognito will only send one-time codes through your own SES identity.
+      EmailConfiguration:
+        EmailSendingAccount: DEVELOPER
+        SourceArn: !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/${SesIdentity}"
+        From: !Ref FromAddress
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - { Name: verified_email, Priority: 1 }
 
-  SecretsWriter:
-    Type: AWS::Lambda::Function
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
     Properties:
-      Runtime: nodejs20.x
-      Handler: index.handler
-      Timeout: 30
-      Role: !GetAtt SecretsWriterRole.Arn
-      Code:
-        ZipFile: |
-          const { SSMClient, PutParameterCommand, DeleteParameterCommand } = require("@aws-sdk/client-ssm");
-          const crypto = require("crypto");
-          const https = require("https");
-          const url = require("url");
+      UserPoolId: !Ref UserPool
+      ClientName: !Sub "${AWS::StackName}-web"
+      # A static page cannot keep a secret; it uses PKCE instead.
+      GenerateSecret: false
+      ExplicitAuthFlows: [ALLOW_USER_AUTH, ALLOW_REFRESH_TOKEN_AUTH]
+      SupportedIdentityProviders: [COGNITO]
+      CallbackURLs: [!Ref AppUrl]
+      LogoutURLs: [!Ref AppUrl]
+      AllowedOAuthFlows: [code]
+      AllowedOAuthScopes: [openid, email]
+      AllowedOAuthFlowsUserPoolClient: true
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+      # One-hour access tokens, renewed silently for a year from the refresh
+      # token, so the household signs in about once a year per device.
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 365
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
 
-          function respond(event, context, status, data = {}) {
-            return new Promise((resolve) => {
-              const body = JSON.stringify({
-                Status: status, Reason: "see CloudWatch " + context.logStreamName,
-                PhysicalResourceId: event.LogicalResourceId, StackId: event.StackId,
-                RequestId: event.RequestId, LogicalResourceId: event.LogicalResourceId, Data: data,
-              });
-              const p = url.parse(event.ResponseURL);
-              const req = https.request({
-                hostname: p.hostname, path: p.path, method: "PUT",
-                headers: { "content-type": "", "content-length": Buffer.byteLength(body) },
-              }, () => resolve());
-              req.on("error", () => resolve());
-              req.write(body); req.end();
-            });
-          }
-
-          exports.handler = async (event, context) => {
-            const ssm = new SSMClient({});
-            const prefix = "/" + event.ResourceProperties.StackName;
-            try {
-              if (event.RequestType === "Delete") {
-                for (const n of ["password-hash", "jwt-secret"]) {
-                  try { await ssm.send(new DeleteParameterCommand({ Name: prefix + "/" + n })); } catch (_) {}
-                }
-                return respond(event, context, "SUCCESS");
-              }
-              const pw = event.ResourceProperties.Password;
-              const salt = crypto.randomBytes(16).toString("hex");
-              const hash = crypto.scryptSync(pw, salt, 64).toString("hex");
-              await ssm.send(new PutParameterCommand({
-                Name: prefix + "/password-hash", Type: "SecureString",
-                Value: `scrypt$${salt}$${hash}`, Overwrite: true,
-              }));
-              await ssm.send(new PutParameterCommand({
-                Name: prefix + "/jwt-secret", Type: "SecureString",
-                Value: crypto.randomBytes(32).toString("hex"), Overwrite: true,
-              }));
-              return respond(event, context, "SUCCESS");
-            } catch (e) {
-              console.error(e);
-              return respond(event, context, "FAILED");
-            }
-          };
-
-  AppSecrets:
-    Type: AWS::CloudFormation::CustomResource
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
     Properties:
-      ServiceToken: !GetAtt SecretsWriter.Arn
-      StackName: !Ref AWS::StackName
-      Password: !Ref HouseholdPassword
+      UserPoolId: !Ref UserPool
+      Domain: !Ref SignInDomainPrefix
+      # Version 2 is the newer hosted page; the classic one cannot do
+      # passwordless sign-in.
+      ManagedLoginVersion: 2
+
+  SignInBranding:
+    Type: AWS::Cognito::ManagedLoginBranding
+    DependsOn: UserPoolDomain
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientId: !Ref UserPoolClient
+      UseCognitoProvidedValues: true
+
+  # Created with no invitation email. They start in FORCE_CHANGE_PASSWORD,
+  # which Cognito does not allow to sign in with an emailed code - run the
+  # SetPasswordCommand output once per user after the stack is up.
+  FirstUser:
+    Type: AWS::Cognito::UserPoolUser
+    Properties:
+      UserPoolId: !Ref UserPool
+      Username: !Ref SignInEmail
+      MessageAction: SUPPRESS
+      UserAttributes:
+        - { Name: email, Value: !Ref SignInEmail }
+        - { Name: email_verified, Value: "true" }
+
+  SecondUser:
+    Type: AWS::Cognito::UserPoolUser
+    Condition: HasSecondUser
+    Properties:
+      UserPoolId: !Ref UserPool
+      Username: !Ref SecondSignInEmail
+      MessageAction: SUPPRESS
+      UserAttributes:
+        - { Name: email, Value: !Ref SecondSignInEmail }
+        - { Name: email_verified, Value: "true" }
 
   # ── Shared Lambda role ─────────────────────────────────────────────────
   AppRole:
@@ -227,17 +266,6 @@ Resources:
                 Action: [dynamodb:Query, dynamodb:GetItem, dynamodb:PutItem,
                          dynamodb:UpdateItem, dynamodb:DeleteItem, dynamodb:BatchWriteItem]
                 Resource: !GetAtt FriendsTable.Arn
-              - Sid: AppSecretsOnly
-                Effect: Allow
-                Action: ssm:GetParameters
-                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AWS::StackName}/*"
-              - Sid: DecryptSsmSecureStrings
-                Effect: Allow
-                Action: kms:Decrypt
-                Resource: !Sub "arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/*"
-                Condition:
-                  StringEquals:
-                    kms:ViaService: !Sub "ssm.${AWS::Region}.amazonaws.com"
               - Sid: SendRemindersOnly
                 Effect: Allow
                 Action: [ses:SendEmail, ses:SendRawEmail]
@@ -269,7 +297,6 @@ Resources:
         Variables:
           TABLE_NAME: !Ref FriendsTable
           ALLOWED_ORIGIN: !Ref AllowedOrigin
-          SSM_PREFIX: !Sub "/${AWS::StackName}"
       Code:
         ZipFile: |
           export const handler = async () => ({
@@ -337,7 +364,7 @@ Resources:
       ProtocolType: HTTP
       CorsConfiguration:
         AllowOrigins: [!Ref AllowedOrigin]
-        AllowMethods: [GET, PUT, POST, OPTIONS]
+        AllowMethods: [GET, PUT, OPTIONS]
         AllowHeaders: [content-type, authorization]
         MaxAge: 3600
 
@@ -349,11 +376,38 @@ Resources:
       IntegrationUri: !GetAtt ApiFunction.Arn
       PayloadFormatVersion: "2.0"
 
-  ApiRoute:
+  # Checks the Cognito access token before the Lambda runs. A request without
+  # a valid token from this pool and client never reaches the function.
+  ApiAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties:
+      ApiId: !Ref HttpApi
+      Name: cognito
+      AuthorizerType: JWT
+      IdentitySource: [$request.header.Authorization]
+      JwtConfiguration:
+        Issuer: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}"
+        Audience: [!Ref UserPoolClient]
+
+  # Explicit routes rather than $default: an authorizer on $default also
+  # applies to the browser's CORS preflight, which carries no token, so every
+  # request from the app would fail before it started.
+  FriendsGetRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
       ApiId: !Ref HttpApi
-      RouteKey: $default
+      RouteKey: GET /friends
+      AuthorizationType: JWT
+      AuthorizerId: !Ref ApiAuthorizer
+      Target: !Sub "integrations/${ApiIntegration}"
+
+  FriendsPutRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: PUT /friends
+      AuthorizationType: JWT
+      AuthorizerId: !Ref ApiAuthorizer
       Target: !Sub "integrations/${ApiIntegration}"
 
   ApiStage:
@@ -362,8 +416,9 @@ Resources:
       ApiId: !Ref HttpApi
       StageName: $default
       AutoDeploy: true
-      # The per-IP lockout in the API handles a patient guesser. This handles a
-      # fast one, and caps what an idle stranger can cost you in Lambda time.
+      # Unauthenticated requests are rejected before the Lambda runs, but they
+      # still count as API calls. This caps what a stranger hammering the
+      # endpoint can cost you.
       DefaultRouteSettings:
         ThrottlingRateLimit: 20
         ThrottlingBurstLimit: 40
@@ -411,6 +466,18 @@ Outputs:
   ApiEndpoint:
     Description: Put this in index.html as the API constant.
     Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+  SignInDomain:
+    Description: Put this in index.html as AUTH_DOMAIN, and add it to connect-src in the page's CSP.
+    Value: !Sub "https://${SignInDomainPrefix}.auth.${AWS::Region}.amazoncognito.com"
+  SignInClientId:
+    Description: Put this in index.html as AUTH_CLIENT.
+    Value: !Ref UserPoolClient
+  SetPasswordCommand:
+    Description: >
+      Run once per sign-in email (swap in the second address). Sets a random
+      password nobody is told, which moves the user out of FORCE_CHANGE_PASSWORD
+      so the emailed code works.
+    Value: !Sub "aws cognito-idp admin-set-user-password --region ${AWS::Region} --user-pool-id ${UserPool} --permanent --username ${SignInEmail} --password \"$(openssl rand -base64 24)Aa1\""
   TableName:
     Value: !Ref FriendsTable
   ReminderFunctionName:
