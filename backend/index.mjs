@@ -1,17 +1,16 @@
-// Birthday app API -- auth + friends read/write.
+// Birthday app API -- friends read/write.
 //
 // One Lambda behind an HTTP API. At two users and a few hundred writes a
 // year, splitting this per-route would triple the deploy surface and buy
 // nothing.
 //
-// Auth model: a single shared household password. The browser POSTs it to
-// /auth, we compare against a scrypt hash held in SSM, and hand back an
-// HMAC-signed token. The static page never holds a secret -- a password
-// checked in browser JS is not a check at all, since anyone can view source.
+// Auth model: Cognito. The household signs in on Cognito's hosted page with
+// an emailed one-time code, and API Gateway's JWT authorizer checks the
+// access token before this function is ever invoked. The user pool is
+// invite-only, so a valid token means one of the household's own accounts.
 
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, QueryCommand, BatchWriteCommand, GetCommand, UpdateCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
-import { SSMClient, GetParametersCommand } from "@aws-sdk/client-ssm";
+import { DynamoDBDocumentClient, QueryCommand, BatchWriteCommand } from "@aws-sdk/lib-dynamodb";
 import crypto from "crypto";
 
 // Every one of these comes from the CloudFormation stack. There are no
@@ -26,89 +25,20 @@ function required(name) {
 const REGION = required("AWS_REGION");
 const TABLE = required("TABLE_NAME");
 const ORIGIN = required("ALLOWED_ORIGIN");
-// Secrets live under /<stack-name>/, and the execution role is scoped to that
-// same prefix. Hard-coding it broke every stack not literally named "bdayapp":
-// the role could not read /bdayapp/* and the app returned "config unavailable".
-const SSM_PREFIX = required("SSM_PREFIX").replace(/\/+$/, "");
-
 // Shared list: both users read and write the same partition. If these ever
 // need to split, this becomes a per-user value and the data needs migrating.
 const OWNER = "household";
 
-const TOKEN_TTL_SEC = 30 * 24 * 60 * 60;  // 30 days
 const MAX_FRIENDS = 2000;                 // mirrors the client-side cap
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }));
-const ssm = new SSMClient({ region: REGION });
-
-// SSM is read once per container and cached. Lambda reuses warm containers,
-// so this is typically one call per cold start rather than one per request.
-let _secrets = null;
-async function secrets() {
-  if (_secrets) return _secrets;
-  const hashName = `${SSM_PREFIX}/password-hash`;
-  const jwtName = `${SSM_PREFIX}/jwt-secret`;
-  const out = await ssm.send(new GetParametersCommand({
-    Names: [hashName, jwtName],
-    WithDecryption: true,
-  }));
-  const byName = Object.fromEntries((out.Parameters || []).map(p => [p.Name, p.Value]));
-  const hash = byName[hashName];
-  const jwt = byName[jwtName];
-  // GetParameters reports unknown names in InvalidParameters rather than
-  // throwing, so an absent secret would otherwise surface as "undefined" and
-  // be compared against - which fails open on a falsy hash.
-  if (!hash || !jwt) throw new Error("app secrets missing under " + SSM_PREFIX);
-  _secrets = { hash, jwt };
-  return _secrets;
-}
-
-const b64u = buf => Buffer.from(buf).toString("base64url");
-
-function sign(payload, secret) {
-  const body = b64u(JSON.stringify(payload));
-  const mac = crypto.createHmac("sha256", secret).update(body).digest();
-  return body + "." + b64u(mac);
-}
-
-function verifyToken(token, secret) {
-  if (typeof token !== "string" || !token.includes(".")) return null;
-  const [body, mac] = token.split(".");
-  const expected = b64u(crypto.createHmac("sha256", secret).update(body).digest());
-  // timingSafeEqual throws on length mismatch, so guard before comparing.
-  if (mac.length !== expected.length) return null;
-  if (!crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(expected))) return null;
-  let payload;
-  try { payload = JSON.parse(Buffer.from(body, "base64url").toString()); } catch { return null; }
-  if (!payload || typeof payload.exp !== "number" || payload.exp < Date.now() / 1000) return null;
-  // A signature proves the token came from us; it does not prove what it is
-  // for. Pin the subject so a token minted for anything else is not accepted
-  // here just because the same signing key produced it.
-  if (payload.sub !== OWNER) return null;
-  // Reject an absurd lifetime even if correctly signed, so a token issued by
-  // an older build with a longer TTL cannot outlive the current policy.
-  if (typeof payload.iat === "number" && payload.exp - payload.iat > TOKEN_TTL_SEC) return null;
-  return payload;
-}
-
-// scrypt$<salt>$<hash>. Constant-time compare so a wrong password cannot be
-// narrowed down by timing the response.
-function checkPassword(pw, stored) {
-  const parts = String(stored).split("$");
-  if (parts.length !== 3 || parts[0] !== "scrypt") return false;
-  const [, salt, want] = parts;
-  const got = crypto.scryptSync(pw, salt, 64).toString("hex");
-  if (got.length !== want.length) return false;
-  return crypto.timingSafeEqual(Buffer.from(got), Buffer.from(want));
-}
-
 const headers = {
   "Access-Control-Allow-Origin": ORIGIN,
   "Access-Control-Allow-Headers": "content-type,authorization",
-  "Access-Control-Allow-Methods": "GET,PUT,POST,OPTIONS",
+  "Access-Control-Allow-Methods": "GET,PUT,OPTIONS",
   "Content-Type": "application/json",
-  // /auth hands back a bearer token and /friends returns the whole list, so
-  // nothing here is safe to sit in a shared cache.
+  // /friends returns the whole list, so nothing here is safe to sit in a
+  // shared cache.
   "Cache-Control": "no-store",
   "Vary": "Origin",
   "X-Content-Type-Options": "nosniff",
@@ -186,104 +116,17 @@ async function writeAll(friends) {
   }
 }
 
-// ── Brute-force lockout ──────────────────────────────────────────────────
-// Failure counters live in the same table under a reserved partition, so
-// there is nothing extra to provision and DynamoDB TTL sweeps them for
-// free. Keyed by source IP: crude, but the realistic threat here is a
-// script hammering one endpoint, not a distributed attack on a household
-// birthday list.
-const MAX_ATTEMPTS = 8;
-const LOCKOUT_MIN = 15;
-const AUTH_PARTITION = "__authfail";
-
-async function checkLockout(ip) {
-  try {
-    const out = await ddb.send(new GetCommand({
-      TableName: TABLE,
-      Key: { ownerId: AUTH_PARTITION, friendId: ip },
-    }));
-    const rec = out.Item;
-    if (!rec) return { locked: false };
-    if ((rec.count || 0) < MAX_ATTEMPTS) return { locked: false };
-    const until = rec.lockedUntil || 0;
-    const now = Math.floor(Date.now() / 1000);
-    if (until > now) return { locked: true, retryMins: Math.ceil((until - now) / 60) };
-    // Lockout expired -- wipe the slate so the next attempt starts clean.
-    await clearFailures(ip);
-    return { locked: false };
-  } catch {
-    // Never let a counter failure block a legitimate sign-in.
-    return { locked: false };
-  }
-}
-
-async function recordFailure(ip) {
-  const now = Math.floor(Date.now() / 1000);
-  try {
-    const out = await ddb.send(new UpdateCommand({
-      TableName: TABLE,
-      Key: { ownerId: AUTH_PARTITION, friendId: ip },
-      UpdateExpression: "SET #c = if_not_exists(#c, :z) + :one, lockedUntil = :until, expiresAt = :ttl",
-      ExpressionAttributeNames: { "#c": "count" },
-      ExpressionAttributeValues: {
-        ":z": 0, ":one": 1,
-        ":until": now + LOCKOUT_MIN * 60,
-        ":ttl": now + 24 * 60 * 60,
-      },
-      ReturnValues: "UPDATED_NEW",
-    }));
-    return out.Attributes?.count || 0;
-  } catch { return 0; }
-}
-
-async function clearFailures(ip) {
-  try {
-    await ddb.send(new DeleteCommand({
-      TableName: TABLE,
-      Key: { ownerId: AUTH_PARTITION, friendId: ip },
-    }));
-  } catch {}
-}
-
 export const handler = async (event) => {
   const method = event.requestContext?.http?.method || "GET";
   const path = event.rawPath || "/";
 
   if (method === "OPTIONS") return { statusCode: 204, headers, body: "" };
 
-  let sec;
-  try { sec = await secrets(); }
-  catch { return reply(500, { error: "config unavailable" }); }
-
-  if (path.endsWith("/auth") && method === "POST") {
-    // API Gateway throttling caps request *rate*, which does nothing against
-    // a slow, patient guesser. This counts failures per source IP and locks
-    // the address out for a while once it crosses the threshold.
-    const ip = String(event.requestContext?.http?.sourceIp || "unknown").slice(0, 45);
-    const gate = await checkLockout(ip);
-    if (gate.locked) {
-      return reply(429, { error: `Too many attempts. Try again in ${gate.retryMins} minute${gate.retryMins === 1 ? "" : "s"}.` });
-    }
-
-    let pw = "";
-    try { pw = JSON.parse(event.body || "{}").password || ""; } catch {}
-    if (!pw || !checkPassword(pw, sec.hash)) {
-      const after = await recordFailure(ip);
-      const left = Math.max(0, MAX_ATTEMPTS - after);
-      return reply(401, {
-        error: "wrong password",
-        ...(left <= 2 ? { warning: `${left} attempt${left === 1 ? "" : "s"} left before lockout.` } : {}),
-      });
-    }
-    await clearFailures(ip);
-    const iat = Math.floor(Date.now() / 1000);
-    const exp = iat + TOKEN_TTL_SEC;
-    return reply(200, { token: sign({ sub: OWNER, iat, exp }, sec.jwt), exp });
-  }
-
-  const auth = event.headers?.authorization || event.headers?.Authorization || "";
-  const claims = verifyToken(auth.replace(/^Bearer\s+/i, ""), sec.jwt);
-  if (!claims) return reply(401, { error: "not signed in" });
+  // API Gateway has already verified the token. Checking that its claims
+  // arrived anyway means a route accidentally left without the authorizer
+  // fails closed instead of serving the list to anyone.
+  const claims = event.requestContext?.authorizer?.jwt?.claims;
+  if (!claims || !claims.sub) return reply(401, { error: "not signed in" });
 
   if (path.endsWith("/friends") && method === "GET") {
     const items = await readAll();

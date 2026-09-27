@@ -15,24 +15,6 @@
       "Resource": "arn:aws:dynamodb:REGION:ACCOUNT_ID:table/bdayapp-friends"
     },
     {
-      "Sid": "AppSecretsOnly",
-      "Effect": "Allow",
-      "Action": "ssm:GetParameters",
-      "Resource": [
-        "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/bdayapp/password-hash",
-        "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/bdayapp/jwt-secret"
-      ]
-    },
-    {
-      "Sid": "DecryptSsmSecureStrings",
-      "Effect": "Allow",
-      "Action": "kms:Decrypt",
-      "Resource": "*",
-      "Condition": {
-        "StringEquals": { "kms:ViaService": "ssm.REGION.amazonaws.com" }
-      }
-    },
-    {
       "Sid": "SendRemindersFromVerifiedAddresses",
       "Effect": "Allow",
       "Action": [

@@ -24,7 +24,7 @@ Live at **https://matthewduke1.github.io/birthday-reminder-gifting-app/**
 
 ```
 index.html            the entire front end -- no build step, no framework
-backend/index.mjs     API Lambda: POST /auth, GET /friends, PUT /friends
+backend/index.mjs     API Lambda: GET /friends, PUT /friends
 backend/reminder.mjs  reminder Lambda, run daily by EventBridge Scheduler
 backend/*.json        IAM trust and policy documents
 deploy-aws.sh         optional S3 + CloudFront deploy
@@ -59,30 +59,36 @@ cannot read a browser.
 
 ## Auth
 
-One shared household password. The browser posts it to `/auth`, the Lambda
-compares it against a scrypt hash held in SSM, and hands back an HMAC-signed
-token good for 30 days. Eight failed attempts from an IP triggers a lockout.
+Sign-in is Amazon Cognito. The app sends you to Cognito's hosted sign-in page,
+you enter your email, and Cognito emails you a one-time code from the same SES
+sender as the reminders. There is no password to remember.
 
-**You should never see a login.** If `HOUSEHOLD_PASSWORD` is set as a repo
-secret, the build bakes it into the page and the app signs itself in on load.
-Add a birthday and it syncs; there is no setup step.
+- **Invite-only.** The user pool holds exactly the household's accounts, and
+  sign-up is turned off. Anyone else who finds the page gets a sign-in screen
+  and nothing more.
+- **Checked before the code runs.** API Gateway's JWT authorizer rejects any
+  request without a valid access token from this pool before the Lambda is
+  invoked.
+- **Signed in for a year per device.** Access tokens last an hour and are
+  renewed silently from a 365-day refresh token. Signing out revokes the
+  refresh token and ends the Cognito session.
+- **Works offline once signed in.** The list renders from `localStorage`, and
+  sync catches up when the network is back.
 
-That does mean the password ships in the published HTML in clear text, readable
-by anyone who views source. It is an accepted trade here: the data is a family
-birthday list, the API is rate limited, and the lockout still applies. Do not
-reuse the pattern for anything that matters more than this does.
+This replaced a shared household password that was baked into the published
+HTML, where anyone who viewed source could read it.
 
-Skip the secret and the app falls back to a manual sign-in form. Everything
-still works locally, but birthdays added while signed out never reach the
-reminder.
-
-It is scoped for a household, not a tenant system. There are no user accounts.
+To add or remove someone, create or delete them in the Cognito user pool. A new
+user needs a permanent password set once so the emailed code works (see
+`SetPasswordCommand` in [`deploy/README.md`](deploy/README.md)); nobody is ever
+told that password.
 
 ## Running it
 
 ### Use the hosted one
 
-Open the live link, sign in with the household password, and you are done.
+Open the live link, choose **Sign in with email**, and enter the code Cognito
+emails you. Only the household's own accounts can sign in.
 
 ### Deploy the front end yourself
 
@@ -93,14 +99,9 @@ GitHub Pages builds from `.github/workflows/deploy-pages.yml`. It substitutes th
 
    | Secret | Example | Needed for |
    |---|---|---|
-   | `HOUSEHOLD_PASSWORD` | your household password | silent sign-in, so reminders work with no setup |
    | `EMAILJS_PUBLIC_KEY` | your EmailJS public key | the in-app "send heads-up now" button |
    | `EMAILJS_SERVICE_ID` | `service_xxxxxxx` | same |
    | `EMAILJS_TEMPLATE_ID` | `template_xxxxxxx` | same |
-
-   `HOUSEHOLD_PASSWORD` is the one that matters. Without it the app requires a
-   manual sign-in, and a birthday added while signed out will not generate a
-   reminder. The build logs a warning if the secret is missing.
 
 2. **Settings → Pages → Source → GitHub Actions**
 3. Push to `main`.
@@ -170,7 +171,8 @@ is in [`backend/EMAIL-SETUP.md`](backend/EMAIL-SETUP.md).
 
 ## Limits
 
-- One household, one password. No multi-user support.
+- One household sharing one list. Everyone who can sign in sees the same
+  birthdays; there are no per-person lists.
 - 2,000 contacts, enforced on both the client and the API.
 - Reminder recipients are configured on the Lambda, not in the UI.
 - Birthday emails depend on EmailJS quota, and a failure surfaces an

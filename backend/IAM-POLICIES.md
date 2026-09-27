@@ -6,9 +6,10 @@ CloudFormation template creates the same roles and policies and derives the
 account ID and region itself, so the normal path is:
 
 ```bash
-deploy/deploy.sh --password '...' --from you@yourdomain.com \
-  --to you@example.com --origin https://yourname.github.io
+aws cloudformation deploy --template-file deploy/template.yaml ...
 ```
+
+(the full command is in [`deploy/README.md`](../deploy/README.md))
 
 They are kept because they are the readable version of what the template
 creates, and because attaching a policy by hand is sometimes the fastest way to
@@ -64,7 +65,7 @@ Delete the rendered file afterwards; it names your account.
 | File | Purpose |
 |---|---|
 | `trust-policy.json` | Lets Lambda assume the app role. No account-specific values. |
-| `lambda-policy.json` | What the functions may do: the friends table only, this stack's SSM parameters only, KMS decrypt via SSM, and SES send restricted to one verified From address. |
+| `lambda-policy.json` | What the functions may do: the friends table only, and SES send restricted to one verified From address. Sign-in is checked by API Gateway, so the functions need no secrets. |
 | `scheduler-trust.json` | Lets EventBridge Scheduler assume the schedule role, restricted to your account so a scheduler in someone else's account cannot assume it. |
 | `scheduler-policy.json` | Lets the schedule invoke the reminder function, and nothing else. |
 

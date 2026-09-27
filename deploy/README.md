@@ -1,8 +1,8 @@
 # Deploy your own
 
 This folder is the whole backend as one CloudFormation template. It creates the
-database, both functions, the API, the daily schedule, and the IAM roles in your
-own AWS account. Nothing here phones home to mine.
+database, both functions, the API, the Cognito sign-in, the daily schedule, and
+the IAM roles in your own AWS account. Nothing here phones home to mine.
 
 ## What it costs
 
@@ -19,7 +19,7 @@ Concretely, one reminder run a day with a few dozen birthdays:
 | API Gateway (HTTP) | a few hundred calls | $0.00 — first 1M/month free for 12 months, then ~$1.00/M |
 | EventBridge Scheduler | 30 invocations | $0.00 — first 14M/month free |
 | SES | ~30 emails | $0.00 — $0.10 per 1,000 emails, so 30 rounds to nothing |
-| SSM Parameter Store | 2 standard parameters | $0.00 |
+| Cognito (Essentials tier) | 1–2 monthly active users | $0.00 — first 10,000 MAU free |
 | CloudWatch Logs | a few MB | $0.00 — 5 GB free |
 
 **Realistic bill: $0.00–$0.50/month.** After the 12-month API Gateway free tier
@@ -48,7 +48,8 @@ Two things that would actually cost money, neither required:
 - **Import** from `.ics`, `.vcf`, or CSV — Google Calendar, Apple Contacts,
   Outlook.
 - **Export and backup** — CSV plus a lossless JSON backup with restore.
-- **No login step** if you bake the household password in at build time.
+- **Private sign-in** — Cognito's hosted page with a one-time code emailed to
+  you. Invite-only: only the one or two addresses you name can sign in.
 - **Idempotent sends** — one marker per person, per year, per offset, so a retry
   or a double schedule fire never sends twice.
 
@@ -83,8 +84,11 @@ aws cloudformation deploy \
   --capabilities CAPABILITY_IAM \
   --region us-west-2 \
   --parameter-overrides \
-      HouseholdPassword='pick-something-long' \
+      SignInEmail='you@example.com' \
+      SecondSignInEmail='partner@example.com' \
+      SignInDomainPrefix='yourname-birthdays' \
       FromAddress='birthdays@yourdomain.com' \
+      SesIdentity='yourdomain.com' \
       ToAddresses='you@example.com' \
       AllowedOrigin='https://yourname.github.io' \
       AppUrl='https://yourname.github.io/birthday-reminder-gifting-app/' \
@@ -92,24 +96,31 @@ aws cloudformation deploy \
       ReminderHour=8
 ```
 
-`AllowedOrigin` is now required, and must be one exact origin. It used to
-default to `*`, which meant any site a signed-in user happened to visit could
-call your API from their browser with their stored token attached.
+`AllowedOrigin` is the origin alone (`https://yourname.github.io`) and pins
+CORS. `AppUrl` is the full page URL; Cognito only ever sends people back there
+after sign-in.
 
 Or open the CloudFormation console, choose **Create stack → upload a template
 file**, and fill in the same values.
 
-Only the scrypt hash of the password ever reaches the running app, held in SSM
-Parameter Store as a SecureString. It is not written to the stack outputs or to
-any log.
+### Finish setting up sign-in
 
-One caveat worth stating plainly, because the previous wording here was too
-generous: CloudFormation keeps the parameter values you passed in alongside the
-stack, so the plain password can be read back by anyone in the account holding
-`cloudformation:DescribeStackResource` on it. `NoEcho` hides the value in the
-console, not from the API. Treat it as an account-level secret, and rotate it by
-re-running the deploy with a new `HouseholdPassword` - the custom resource
-rewrites the hash in place.
+The template creates each sign-in user without an invitation. Cognito leaves a
+user created that way in `FORCE_CHANGE_PASSWORD`, and in that state it only
+offers password sign-in, not the emailed code. Set a random permanent password
+that nobody is told, once per user. The stack's `SetPasswordCommand` output has
+the command ready to paste:
+
+```bash
+aws cognito-idp admin-set-user-password --region us-west-2 \
+  --user-pool-id us-west-2_XXXXXXXXX --permanent \
+  --username you@example.com --password "$(openssl rand -base64 24)Aa1"
+```
+
+Run it again with `--username partner@example.com` if you set a second user.
+
+Codes are emailed through your SES identity, so in the SES sandbox each
+sign-in address must be verified too.
 
 ### 3. Upload the function code
 
@@ -131,16 +142,22 @@ aws lambda update-function-code --function-name bdayapp-reminder \
 Both files import only the AWS SDK, which the Node 20 runtime already provides,
 so there is no `npm install` and no bundler.
 
-### 4. Point the front end at your API
+### 4. Point the front end at your stack
 
-Take `ApiEndpoint` from the stack outputs and set it in `index.html`:
+Take `ApiEndpoint`, `SignInDomain` and `SignInClientId` from the stack outputs
+and set them in `index.html`:
 
 ```js
 const API = 'https://xxxxxxxx.execute-api.us-west-2.amazonaws.com';
+const AUTH_DOMAIN = 'https://yourname-birthdays.auth.us-west-2.amazoncognito.com';
+const AUTH_CLIENT = 'xxxxxxxxxxxxxxxxxxxxxxxxxx';
 ```
 
-Then deploy `index.html` anywhere static. The included GitHub Actions workflow
-publishes it to Pages and bakes in your secrets; see the root README.
+Put both the API and the sign-in domain in the page's `connect-src` CSP at the
+top of `index.html`, or the browser will block the calls.
+
+Then deploy `index.html` to the exact `AppUrl` you gave the stack. The included
+GitHub Actions workflow publishes it to Pages; see the root README.
 
 ### 5. Check it
 
@@ -166,5 +183,5 @@ Export a backup from the app first if you want to keep the list.
 - **Verify SES for you.** Domain verification needs DNS records only you can
   publish.
 - **Host the front end.** It is a static file; put it on Pages, S3, or anywhere.
-- **Support multiple households.** There is one shared password and one
+- **Support multiple households.** Everyone who can sign in shares one
   `household` partition. It is a family utility, not a tenant system.
