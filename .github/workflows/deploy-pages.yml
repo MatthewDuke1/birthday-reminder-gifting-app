@@ -32,7 +32,6 @@ jobs:
             -e "s|%%EMAILJS_PUBLIC_KEY%%|${EMAILJS_PUBLIC_KEY}|g" \
             -e "s|%%EMAILJS_SERVICE_ID%%|${EMAILJS_SERVICE_ID}|g" \
             -e "s|%%EMAILJS_TEMPLATE_ID%%|${EMAILJS_TEMPLATE_ID}|g" \
-\
             index.html > dist/index.html
           cp -f README.md dist/ 2>/dev/null || true
           touch dist/.nojekyll
