@@ -136,6 +136,10 @@ function cleanFriend(f) {
     relation: s(f.relation, 40),
     notes: s(f.notes, 500),
     source: s(f.source, 20),
+    // Card opt-in. Dropping these here meant the box ticked in the app never
+    // reached the table, so the reminder could never send a card.
+    hideAge: f.hideAge === true,
+    sendCard: f.sendCard === true,
   };
 }
 
