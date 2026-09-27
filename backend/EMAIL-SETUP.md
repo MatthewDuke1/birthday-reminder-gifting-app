@@ -4,7 +4,7 @@ Reminders send from `Birthday Reminders <birthdays@the-duke.org>`.
 
 ## Why not a Gmail address
 
-The first version sent *as* `matthewduke0@gmail.com` through SES. Both test
+The first version sent *as* a personal `@gmail.com` address through SES. Both test
 messages went to spam, and correctly so: Gmail checks whether `gmail.com`
 authorises `amazonses.com` to send on its behalf, and it does not. Gmail's
 own DMARC policy tells receivers to distrust exactly that pattern, and
@@ -32,7 +32,7 @@ three values and must be merged, never overwritten with UPSERT.
 | `<token2>._domainkey` | CNAME | `<token2>.dkim.amazonses.com` |
 | `<token3>._domainkey` | CNAME | `<token3>.dkim.amazonses.com` |
 | apex | TXT | `v=spf1 include:amazonses.com ~all` |
-| `_dmarc` | TXT | `v=DMARC1; p=none; rua=mailto:matthewduke0@gmail.com` |
+| `_dmarc` | TXT | `v=DMARC1; p=none; rua=mailto:<household inbox>` |
 
 DKIM is SES Easy DKIM, RSA-2048, rotated by AWS. The three tokens come from
 `aws sesv2 create-email-identity` and are also readable via
@@ -54,8 +54,9 @@ access, which is why the in-app compose feature still uses EmailJS.
 
 ## Verified addresses
 
-- `matthewduke0@gmail.com`
-- `msb9519@gmail.com`
+Both household members' personal addresses are verified identities, since
+they receive the reminders and the Cognito sign-in codes. They are listed in
+the SES console rather than here, because this repo is public.
 
 ## Checking it still works
 
