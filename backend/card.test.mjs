@@ -47,10 +47,15 @@ ok("hideAge drops age from subject", c.subject === "Happy Birthday, Sarah 🎂")
 ok("hideAge drops age from html", !c.html.includes("31"));
 ok("hideAge drops age from text", !c.text.includes("31"));
 
-// No FROM_NAME configured: no dangling em dash, no "runs" fragment.
+// No FROM_NAME configured: no dangling em dash.
 c = buildCard(F(), "2026-09-12", "");
 ok("unsigned card has no empty signoff", !c.text.includes("—"));
-ok("unsigned footer stays grammatical", c.text.includes("a birthday reminder."));
+
+// The card reads as a personal note, so no "sent automatically" footer.
+c = buildCard(F(), "2026-09-12", "Matt");
+ok("no automation footer in text", !/automatically|nobody else/i.test(c.text));
+ok("no automation footer in html", !/automatically|nobody else/i.test(c.html));
+ok("text ends on the signoff", c.text.endsWith("— Matt"));
 
 // Escaping: a name with markup must not reach the html raw.
 c = buildCard(F({ name: "<b>Bob</b>" }), "2026-09-12", "Matt");
