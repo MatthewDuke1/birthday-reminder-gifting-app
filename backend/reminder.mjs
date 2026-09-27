@@ -353,34 +353,45 @@ export function buildCard(friend, todayStr, fromName) {
   if (age) paras.push(`${age} looks good on you. Have a great one.`);
   if (signoff) paras.push(signoff);
 
-  const text = [`${greeting}, ${name}!`, "", ...paras.flatMap(p => [p, ""]),
-    "--",
-    `Sent automatically by a birthday reminder${signer ? " " + signer + " runs" : ""}.`,
-    "Reply directly - nobody else sees this."].join("\n");
+  const text = [`${greeting}, ${name}!`, ...paras].join("\n\n");
 
   const esc = t => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const body = paras.map((p, i) =>
-    `<p style="margin:0 0 ${i === paras.length - 1 ? "0" : "16px"};">${esc(p)}</p>`).join("");
+  const body = paras.map((p, i) => {
+    const last = i === paras.length - 1;
+    const sign = signoff && last;
+    return `<p style="margin:0 0 ${last ? "0" : "16px"};${sign ? "font-family:Georgia,'Times New Roman',serif;font-style:italic;font-size:18px;color:#B4503A;" : ""}">${esc(p)}</p>`;
+  }).join("");
 
-  const html = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#EFEAE2;margin:0;padding:0;">
-<tr><td align="center" style="padding:0;">
-<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background:#FFFFFF;border-radius:10px;overflow:hidden;border:1px solid #E3DACE;">
-<tr><td style="background:#B4503A;padding:30px 34px 26px;text-align:center;">
-<div style="font-size:40px;line-height:1;margin-bottom:10px;">&#127874;</div>
-<h1 style="margin:0;font-family:Georgia,'Times New Roman',serif;font-size:28px;line-height:1.2;font-weight:700;color:#FFFFFF;">${esc(greeting)},<br>${esc(name)}!</h1>
+  // Confetti is coloured text glyphs, not images or CSS shapes: glyphs render
+  // in Outlook's Word engine and with images off, where both of those vanish.
+  const confetti = (pattern, size, colors) => `<div style="font-size:${size}px;line-height:1.4;letter-spacing:6px;">${
+    pattern.split(" ").map((ch, i) => `<span style="color:${colors[i % colors.length]};">${ch}</span>`).join(" ")}</div>`;
+
+  // Gradients sit on top of a solid bgcolor, so clients that drop
+  // background-image (Outlook desktop) still get the same warm tones.
+  const html = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#F4E1D2" style="background-color:#F4E1D2;background-image:linear-gradient(160deg,#F9E7D8 0%,#F2D4C6 55%,#EBC9C4 100%);margin:0;padding:0;">
+<tr><td align="center" style="padding:36px 14px 40px;">
+${confetti("✦ ● ✦ ● ✦", 17, CONFETTI_ON_PAGE)}
+<table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFFDF9" style="width:100%;max-width:560px;margin-top:14px;background:#FFFDF9;border-radius:18px;overflow:hidden;border:1px solid #E8CFC0;box-shadow:0 12px 32px rgba(122,52,30,.16);">
+<tr><td align="center" bgcolor="#B4503A" style="background-color:#B4503A;background-image:linear-gradient(145deg,#C8603F 0%,#B4503A 50%,#8E3A28 100%);padding:28px 34px 32px;text-align:center;">
+${confetti("● ✦ ● ✦ ● ✦ ●", 14, CONFETTI_ON_RED)}
+<div style="font-size:52px;line-height:1;margin:14px 0 12px;">&#127874;</div>
+<h1 style="margin:0;font-family:Georgia,'Times New Roman',serif;font-size:30px;line-height:1.2;font-weight:700;color:#FFFFFF;">${esc(greeting)},<br>${esc(name)}!</h1>
+<div style="margin-top:16px;">${confetti("✦ ● ✦", 14, CONFETTI_ON_RED)}</div>
 </td></tr>
-<tr><td style="padding:30px 34px 10px;font-family:Helvetica,Arial,sans-serif;font-size:16px;line-height:1.65;color:#221D18;">${body}</td></tr>
-<tr><td style="padding:22px 34px 30px;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-<td style="border-top:1px solid #EBE4DA;padding-top:16px;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.5;color:#8A8077;">
-Sent automatically by a birthday reminder${signer ? " " + esc(signer) + " runs" : ""}. Reply directly &mdash; nobody else sees this.
-</td></tr></table>
-</td></tr>
+<tr><td align="center" style="padding:34px 40px 36px;font-family:Helvetica,Arial,sans-serif;font-size:17px;line-height:1.7;color:#2B221C;text-align:center;">${body}</td></tr>
+<tr><td style="height:8px;line-height:8px;font-size:0;background-color:#E9A23B;background-image:linear-gradient(90deg,#E9A23B,#E07A6B,#B4503A,#6FB3A7);" bgcolor="#E9A23B">&nbsp;</td></tr>
 </table>
+<div style="margin-top:14px;">${confetti("● ✦ ● ✦ ●", 17, CONFETTI_ON_PAGE)}</div>
 </td></tr></table>`;
 
   return { subject, text, html };
 }
+
+// Two sets, because the same confetti cannot read on both the pale page and
+// the terracotta header.
+const CONFETTI_ON_PAGE = ["#B4503A", "#E9A23B", "#6FB3A7", "#D9736A"];
+const CONFETTI_ON_RED = ["#F7D06A", "#FFF3E6", "#F2A48F", "#9ED3C8"];
 
 const ordinalSuffix = n => {
   const t = n % 100;
